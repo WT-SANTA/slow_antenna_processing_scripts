@@ -9,6 +9,7 @@ import pandas as pd
 from pathlib import Path
 from time import sleep
 from sa_common import parse_filename
+from datetime import datetime as dt
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Sort and filter incoming WT-SANTA data for processing and archival storage.')
@@ -18,7 +19,7 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--metadata_csv', type=str, help='Path to the CSV file containing WT-SANTA hardware metadata', default='/mnt/reservoir/slow_antenna_processing_scripts/hardware.csv')
     args = parser.parse_args()
 
-    hardware_info = pd.read_csv(args.metadata_csv)
+    hardware_info = pd.read_csv(args.metadata_csv, parse_dates=['start_dt', 'end_dt'])
     hardware_info['cpu_serial_10'] = hardware_info['cpu_serial'].apply(int, base=16)
     error_files = []
 
@@ -41,7 +42,7 @@ if __name__ == '__main__':
         for i, path_to_process in enumerate(paths_to_process):
             file_to_process = path_to_process.name
             file_info_dict = parse_filename(file_to_process)
-            if np.isnan(file_info_dict['cpu_id']):
+            if pd.isnull(file_info_dict['cpu_id']):
                 error_files.append(file_to_process)
                 continue
             if type(file_info_dict['dt']) != dt:
