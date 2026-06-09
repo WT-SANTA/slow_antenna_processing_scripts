@@ -31,6 +31,8 @@ if __name__ == '__main__':
             if about_to_exit_flag:
                 if len(error_files) > 0:
                     print(f'The following files were not sorted due to errors:\n{"\n".join(error_files)}')
+                    rawfile_abs_paths = [str(p.absolute()) for p in Path(args.ingest_dir).rglob('*.raw')]
+                    print('All raw file absolute paths remaining: \n' + '\n'.join(rawfile_abs_paths))
                 else:
                     print('All files sorted!')
                 break
