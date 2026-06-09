@@ -41,7 +41,11 @@ if __name__ == '__main__':
         about_to_exit_flag = False
         for i, path_to_process in enumerate(paths_to_process):
             file_to_process = path_to_process.name
-            file_info_dict = parse_filename(file_to_process)
+            try:
+                file_info_dict = parse_filename(file_to_process)
+            except ValueError as e:
+                error_files.append(file_to_process)
+                continue
             if pd.isnull(file_info_dict['cpu_id']):
                 error_files.append(file_to_process)
                 continue
