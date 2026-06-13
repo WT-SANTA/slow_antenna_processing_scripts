@@ -332,7 +332,7 @@ if __name__ == '__main__':
             else:
                 output_dir = args.output
             # For the first file in the deployment, there is no previous file to use for correction, so set previous_filepath to None. 
-            if len(this_deployment_metadata_df) < 1:
+            if len(this_deployment_metadata_df) > 1:
                 all_res.append(client.submit(process_file_pair, this_deployment_metadata_df.iloc[0],
                                 this_deployment_metadata_df.iloc[1],
                                 output_dir,
