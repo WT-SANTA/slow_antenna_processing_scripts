@@ -332,11 +332,15 @@ if __name__ == '__main__':
             else:
                 output_dir = args.output
             # For the first file in the deployment, there is no previous file to use for correction, so set previous_filepath to None. 
-            all_res.append(client.submit(process_file_pair, this_deployment_metadata_df.iloc[0],
-                            this_deployment_metadata_df.iloc[1],
-                            output_dir,
-                            previous_filepath=None,
-                            SAMPLE_RATE=SAMPLE_RATE))
+            if len(this_deployment_metadata_df) < 1:
+                all_res.append(client.submit(process_file_pair, this_deployment_metadata_df.iloc[0],
+                                this_deployment_metadata_df.iloc[1],
+                                output_dir,
+                                previous_filepath=None,
+                                SAMPLE_RATE=SAMPLE_RATE))
+            else:
+                print(f'Could not process file {this_deployment_metadata_df.iloc[0]["filename"]} because there is no previous file in the deployment to use for correction. Skipping this file.')
+                continue
             # For subsequent files, use the previous file in the deployment.
             for i in range(2, len(this_deployment_metadata_df)):
                 if args.output is None:
