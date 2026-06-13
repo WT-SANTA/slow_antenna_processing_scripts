@@ -27,6 +27,16 @@ def parse_filename(filename):
             out_dict['filename_spec'] = 2
             out_dict['dt'] = dt.strptime(rawfile_split[0]+rawfile_split[1], '%Y%m%d%H%M%S%f')
             out_dict['relay'] = rawfile_split[2]
+        case 6:
+            # This is a current file with no GPS... see https://github.com/wx4stg/Bruning_Slow_Antenna_Software/issues/3
+            out_dict['filename_spec'] = 3
+            out_dict['dt'] = dt.strptime(rawfile_split[0]+rawfile_split[1]+rawfile_split[2], '%Y%m%d%H%M%S%f')
+            out_dict['lon'] = np.nan
+            out_dict['lat'] = np.nan
+            out_dict['alt'] = np.nan
+            out_dict['gps_err'] = float(rawfile_split[3]) if ~np.isnan(out_dict['lon']) else 0
+            out_dict['cpu_id'] = int(rawfile_split[4], 16)
+            out_dict['relay'] = rawfile_split[5]
         case 9:
             # this is a current filename
             out_dict['filename_spec'] = 3
