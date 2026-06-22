@@ -7,7 +7,8 @@ dependencies:
 - h5py
 - netcdf4
 - xarray
-- pyxlma
 - scipy
 - dask
 - distributed
+- pip:
+  - git+https://github.com/deeplycloudy/xlma-python.git
