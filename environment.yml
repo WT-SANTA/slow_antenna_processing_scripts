@@ -3,6 +3,7 @@ channels:
 - conda-forge
 dependencies:
 - pip
+- pyproj
 - numpy
 - pandas
 - h5py
