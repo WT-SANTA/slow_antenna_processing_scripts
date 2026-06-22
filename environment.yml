@@ -2,6 +2,7 @@ name: wt-santa
 channels:
 - conda-forge
 dependencies:
+- pip
 - numpy
 - pandas
 - h5py
