@@ -1,0 +1,13 @@
+name: wt-santa
+channels:
+- conda-forge
+dependencies:
+- numpy
+- pandas
+- h5py
+- netcdf4
+- xarray
+- pyxlma
+- scipy
+- dask
+- distributed
