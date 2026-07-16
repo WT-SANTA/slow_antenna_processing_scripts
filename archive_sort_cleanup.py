@@ -206,7 +206,8 @@ def filter_lma(filenames_parsed, lma_data_path):
     filenames_parsed['filtered_by_lma'] = False
     files_that_can_be_pruned = filenames_parsed.loc[~filenames_parsed['dt'].isna() & ~filenames_parsed['lat'].isna() & ~filenames_parsed['lon'].isna()]
     days_in_data = files_that_can_be_pruned['dt'].dt.normalize().dropna().unique()
-    for this_date in pd.to_datetime(days_in_data):
+    lma_lat, lma_lon, lma_alt = None, None, None
+    for this_date in sorted(pd.to_datetime(days_in_data)):
         df_this_day = files_that_can_be_pruned.loc[(files_that_can_be_pruned['dt'] >= this_date) & (files_that_can_be_pruned['dt'] < this_date + timedelta(days=1))]
         first_time_this_day = df_this_day['dt'].values.min().astype('datetime64[s]')
         last_time_this_day = df_this_day['dt'].values.max().astype('datetime64[s]')
@@ -219,6 +220,23 @@ def filter_lma(filenames_parsed, lma_data_path):
         files_to_read_mask = (lma_file_times >= first_time_this_day) & (lma_file_times <= last_time_this_day)
         lma_file_times = lma_file_times[files_to_read_mask].astype('datetime64[s]').astype(dt)
         lma_file_paths = np.array(lma_file_paths)[files_to_read_mask].tolist()
+        if len(lma_file_paths) == 0:
+            continue
+        if lma_lat is None or lma_lon is None or lma_alt is None:
+            first_ds = h5py.File(lma_file_paths[0], 'r')
+            lma_header = first_ds['events'][lma_file_times[0].strftime('LMA_%y%m%d_%H%M%S_600')].attrs['header'].decode()
+            lma_header_split = lma_header.split('\n')
+            lma_header_coords = [l for l in lma_header_split if 'Coordinate center (lat,lon,alt):' in l][0]
+            lma_lat, lma_lon, lma_alt = [float(s) for s in lma_header_coords.replace('Coordinate center (lat,lon,alt):', '').strip().split()]
+            first_ds.close()
+        lma_X, lma_Y, lma_Z = geosys.toECEF(lma_lon, lma_lat, lma_alt)
+        sensor_X, sensor_Y, sensor_Z = geosys.toECEF(df_this_day['lon'].values, df_this_day['lat'].values, df_this_day['alt'].values)
+        sensor_distances = ((sensor_X - lma_X)**2 + (sensor_Y - lma_Y)**2 + (sensor_Z - lma_Z)**2)**0.5
+        if np.any(sensor_distances > 100e3):
+            print(f'WARNING: Sensor more than 100 km from the LMA center for date {this_date.strftime("%Y-%m-%d")}.')
+            continue
+        else:
+            print(f'Max sensor distance from LMA center for date {this_date.strftime("%Y-%m-%d")}: {np.max(sensor_distances):.2f} m.')
         if len(lma_file_paths) > 0:
             flash_df = pd.DataFrame()
             for i, this_path in enumerate(lma_file_paths):
