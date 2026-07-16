@@ -52,10 +52,8 @@ def parse_filename(filename):
     return out_dict
 
 
-def read_SA_file(file_to_read, packet_length=9, previous_file=None):
-    with open(file_to_read, 'rb') as f:
-        ba = f.read()
-    this_bytes = np.frombuffer(ba, dtype=np.uint8)
+
+def rotate_SA_array(this_bytes, packet_length=9, previous_file=None):
     j = 0
     for j, byte in enumerate(this_bytes):
         # Find the first byte that is the header of the an ADC packet
@@ -82,6 +80,13 @@ def read_SA_file(file_to_read, packet_length=9, previous_file=None):
         else:
             print('First packet not recovered')
     return adc_packets
+
+
+def read_SA_file(file_to_read, packet_length=9, previous_file=None):
+    with open(file_to_read, 'rb') as f:
+        ba = f.read()
+    this_bytes = np.frombuffer(ba, dtype=np.uint8)
+    return rotate_SA_array(this_bytes, packet_length=packet_length, previous_file=previous_file)
 
 
 def decode_SA_array(data_array):
