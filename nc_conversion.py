@@ -7,7 +7,9 @@ import pandas as pd
 import os
 import sa_common
 import argparse
-from dask.distributed import LocalCluster
+from dask.distributed import LocalCluster, wait
+import sys
+import traceback
 
 
 u4max = np.iinfo(np.uint32).max
@@ -336,11 +338,12 @@ if __name__ == '__main__':
                 output_dir = args.output
             # For the first file in the deployment, there is no previous file to use for correction, so set previous_filepath to None. 
             if len(this_deployment_metadata_df) > 1:
-                all_res.append(client.submit(process_file_pair, this_deployment_metadata_df.iloc[0],
+                all_res.append((this_deployment_metadata_df.iloc[0]['path'],
+                                client.submit(process_file_pair, this_deployment_metadata_df.iloc[0],
                                 this_deployment_metadata_df.iloc[1],
                                 output_dir,
                                 previous_filepath=None,
-                                SAMPLE_RATE=SAMPLE_RATE))
+                                SAMPLE_RATE=SAMPLE_RATE)))
             else:
                 print(f'Could not process file {this_deployment_metadata_df.iloc[0]["filename"]} because there is no previous file in the deployment to use for correction. Skipping this file.')
                 continue
@@ -350,10 +353,25 @@ if __name__ == '__main__':
                     output_dir = os.path.join(os.path.dirname(this_deployment_metadata_df.iloc[i]['path']), 'processed')
                 else:
                     output_dir = args.output
-                all_res.append(client.submit(process_file_pair, this_deployment_metadata_df.iloc[i-1],
+                all_res.append((this_deployment_metadata_df.iloc[i-1]['path'],
+                                client.submit(process_file_pair, this_deployment_metadata_df.iloc[i-1],
                                             this_deployment_metadata_df.iloc[i],
                                             output_dir,
                                             previous_filepath=this_deployment_metadata_df.iloc[i-2]['path'],
-                                SAMPLE_RATE=SAMPLE_RATE))
-    client.gather(all_res)
+                                SAMPLE_RATE=SAMPLE_RATE)))
+    wait([future for _, future in all_res])
+    failures = []
+    for source_path, future in all_res:
+        if future.status == 'error':
+            failures.append((source_path, future.exception(), future.traceback()))
     client.close()
+    cluster.close()
+
+    n_ok = len(all_res) - len(failures)
+    print(f'\nProcessed {n_ok} of {len(all_res)} file pairs successfully.')
+    if failures:
+        print(f'{len(failures)} file pairs failed:', file=sys.stderr)
+        for source_path, exception, tb in failures:
+            print(f'\n--- {source_path} ---', file=sys.stderr)
+            traceback.print_exception(type(exception), exception, tb, file=sys.stderr)
+        sys.exit(1)
