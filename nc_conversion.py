@@ -193,6 +193,9 @@ def process_file_pair(file_info_1, file_info_2, output_dir, previous_filepath=No
     sensor_relay = file_info_1['relay']
     this_dt = file_info_1['dt']
     fileoutname = f'SA{sensor_num}_{this_dt.strftime("%Y-%m-%d_%H-%M-%S")}.nc'
+    fileoutpath = os.path.join(output_dir, fileoutname)
+    if os.path.exists(fileoutpath):
+        return
     ds = ds.assign_coords({'sensor_num' : np.array([sensor_num], dtype='i4')})        
     match sensor_relay:
         case 'a':
@@ -251,8 +254,8 @@ def process_file_pair(file_info_1, file_info_2, output_dir, previous_filepath=No
     ds['sensor_num'].attrs['long_name'] = 'ADC board number'
     comp_ds = compress_all(ds.isel(sample=slice(0, len(adc_reading_1))))
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    print(os.path.join(output_dir, fileoutname))
-    comp_ds.to_netcdf(os.path.join(output_dir, fileoutname), engine='netcdf4')
+    print(fileoutpath)
+    comp_ds.to_netcdf(fileoutpath, engine='netcdf4')
 
 
 if __name__ == '__main__':
