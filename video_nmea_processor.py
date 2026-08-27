@@ -253,13 +253,14 @@ if __name__ == '__main__':
             bottomLeftCornerOfText = (10, frame_height - 10) # Bottom-left corner of the text string in the image
             fontScale = 1
             fontColor = (0, 0, 255) # Blue, Green, Red
-            lineType = 2
+            linewidth = 1
+            lineType = cv2.LINE_AA
 
-            cv2.putText(frame, text, bottomLeftCornerOfText, font, fontScale, fontColor, lineType)
+            cv2.putText(frame, text, bottomLeftCornerOfText, font, fontScale, fontColor, linewidth, lineType)
             if args.t is not None:
                 (text_width, text_height), baseline = cv2.getTextSize(text, font, fontScale, 1)
                 bottom_left_corner_of_header = (10, frame_height - (20 + text_height)) # 10 pixels above the previous text
-                cv2.putText(frame, args.t, bottom_left_corner_of_header, font, fontScale, fontColor, lineType)
+                cv2.putText(frame, args.t, bottom_left_corner_of_header, font, fontScale, fontColor, linewidth, lineType)
 
             # Write the frame to the output video
             out.write(frame)
