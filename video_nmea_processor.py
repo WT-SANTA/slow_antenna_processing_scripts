@@ -129,10 +129,8 @@ if __name__ == '__main__':
                 continue
             if byte[-1] != 1:
                 # If the stop bit is not detected, check to see if we are at the end of the packet.
-                if np.all(byte == 0):
-                    break
-                # If this is not the end of the packet and no stop bit is detected, the clock has drifted too far and decoding is no longer possible.
-                raise ValueError(f'No stop bit detected at elapsed time {this_bit_elapsed}!')
+                # At this point, just try decoding what we have, and if it doesn't work, give up.
+                break
             else:
                 # If a start and stop bit are found, great! We can proceed with decoding.
                 # Janky implementation of a PLL
@@ -171,15 +169,19 @@ if __name__ == '__main__':
                 this_nmea_lon = this_nmea_msg.longitude
             except AttributeError:
                 this_nmea_lon = None
-        except pynmea2.ChecksumError as e:
+        except (pynmea2.ChecksumError, pynmea2.ParseError) as e:
             this_nmea_msg = None
+            this_nmea_time = None
+            this_nmea_lat = None
+            this_nmea_lon = None
         nmea_times.append(this_nmea_time)
         nmea_lats.append(this_nmea_lat)
         nmea_lons.append(this_nmea_lon)
         
 
     # Keep only the NMEA sentences with valid times, and drop duplicates
-    unique_nmea_times = set()
+    unique_nmea_times = []
+    seen_nmea_times = set()
     unique_nmea_frames = []
     unique_nmea_lats = []
     unique_nmea_lons = []
@@ -189,8 +191,9 @@ if __name__ == '__main__':
             this_nmea_lat = nmea_lats[i]
             this_nmea_lon = nmea_lons[i]
             this_nmea_time = this_nmea_time.astimezone(timezone.utc).replace(tzinfo=None)
-            if  not this_nmea_time in unique_nmea_times:
-                unique_nmea_times.add(this_nmea_time)
+            if this_nmea_time not in seen_nmea_times:
+                seen_nmea_times.add(this_nmea_time)
+                unique_nmea_times.append(this_nmea_time)
                 unique_nmea_frames.append(this_nmea_frame)
                 unique_nmea_lats.append(this_nmea_lat)
                 unique_nmea_lons.append(this_nmea_lon)
@@ -208,8 +211,8 @@ if __name__ == '__main__':
     actual_nmea_elapsed = pps_digital_elapsed[previous_pps]
 
     # Use ffmpeg to read the frame times from the video
-    frame_elapsed_json = ffmpeg.probe(input_video, select_streams='v', show_entries='frame=pts_time', of='json')
-    frame_elapsed = np.array([frame['pts_time'] for frame in frame_elapsed_json['frames']], dtype=float)
+    frame_elapsed_json = ffmpeg.probe(input_video, select_streams='v', show_entries='packet=pts_time')
+    frame_elapsed = np.sort(np.array([packet['pts_time'] for packet in frame_elapsed_json['packets']], dtype=float))
 
     # Interpolate the NMEA times to the frame times
     tinterper = interp1d(actual_nmea_elapsed, unique_nmea_times.astype('datetime64[ns]').astype(float), fill_value='extrapolate')
