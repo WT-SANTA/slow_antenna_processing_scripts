@@ -94,8 +94,9 @@ if __name__ == '__main__':
     # This acts as a rolling average for comparing the serial signal to see if it is in mark or space
     # Due to the nature of audio sampling, the serial signal has some low frequency components, especially at the start
     # By comparing to a moving average instead of a fixed threshold or zero-crossing, we can avoid misclassifying bits
-    gps_digitizer = scipy.signal.fftconvolve(gps_signal, filtwin/np.sum(filtwin), mode='same')
-    gps_digital_mask = gps_nonzero_signal > gps_digitizer[gps_nonzero_mask] # Mask of points where the GPS signal is in the mark state
+    gps_digitizer = scipy.signal.oaconvolve(gps_signal, filtwin/np.sum(filtwin), mode='same')
+    gps_nonzero_digitizer = gps_digitizer[gps_nonzero_mask]
+    gps_digital_mask = gps_nonzero_signal > gps_nonzero_digitizer # Mask of points where the GPS signal is in the mark state
 
     # A few useful constants used in the digitization process
     sec_per_bit = serial_bitrate**(-1)
@@ -106,19 +107,21 @@ if __name__ == '__main__':
     print('Digitizing NMEA stream...')
     nmea_infos = [] # List containing NMEA strings
     nmea_frames = [] # List containing the start frame of each NMEA string
+    # With standard NMEA, this is 1 start bit, 8 data bits, and 1 stop bit, for a total of 10 bits
+    gps_packet_ends = np.nonzero(gps_packet_ends)[0] # the endpoints for each packet
+    bit_offsets = np.arange(0, bits_per_word * sec_per_bit, sec_per_bit)
     for i, gps_packet_start in enumerate(np.nonzero(gps_packet_starts)[0]):
-        gps_packet_end = np.nonzero(gps_packet_ends)[0][i+1] # the matching endpoint for this packet
+        print(f'Digitizing packet {i+1}/{np.sum(gps_packet_starts)}...')
+        gps_packet_end = gps_packet_ends[i+1] # the matching endpoint for this packet
         gps_packet_end_elapsed = gps_nonzero_elapsed[gps_packet_end] # the elapsed time of the end of this packet
         this_bit_elapsed = gps_nonzero_elapsed[gps_packet_start] + 0.5 * sec_per_bit # Set up for the while loop. Start at the first bit of the packet
         serial_string = '' # String to hold the NMEA messages once parsed
-        while True:
+        while this_bit_elapsed < gps_packet_end_elapsed:
             # This loop iterates once per word (start bit + data bits + stop bit) of the NMEA packet
-            # With standard NMEA, this is 1 start bit, 8 data bits, and 1 stop bit, for a total of 10 bits
-            bit_elapseds = np.arange(this_bit_elapsed, this_bit_elapsed + bits_per_word * sec_per_bit, sec_per_bit)[:bits_per_word] # This last slice is to avoid accidentally including 11 bits. Probably could use linspace here.
+            bit_elapseds = this_bit_elapsed + bit_offsets
             # Find the closest sample to each bit elapsed time
-            closest_bit = np.argmin(np.abs(gps_nonzero_elapsed - bit_elapseds[:, None]), axis=1)
+            closest_bit = np.searchsorted(gps_nonzero_elapsed, bit_elapseds)
             byte = gps_digital_mask[closest_bit] # Define an array containing the word we want to decode
-            
             # Ensure that the start bit is present and valid
             if byte[0] != 0:
                 # If the start bit is not detected, increment the elapsed time by 1 bit time and try again. This seemed to work well in testing.
@@ -135,15 +138,12 @@ if __name__ == '__main__':
                 # Janky implementation of a PLL
                 # Select 1 second around the stop bit
                 stop_bit_elapseds = np.array([bit_elapseds[-1]-sec_per_bit, bit_elapseds[-1]+sec_per_bit])
-                stop_bit_limits = np.argmin(np.abs(gps_nonzero_elapsed - stop_bit_elapseds[:, None]), axis=1)
+                stop_bit_limits = np.searchsorted(gps_nonzero_elapsed, stop_bit_elapseds)
                 # Find the points in the stop bit that are most clearly "signal high"
-                unambig = gps_nonzero_signal[stop_bit_limits[0]:stop_bit_limits[1]] - gps_digitizer[gps_nonzero_mask][stop_bit_limits[0]:stop_bit_limits[1]] > 10000
+                unambig = gps_nonzero_signal[stop_bit_limits[0]:stop_bit_limits[1]] - gps_nonzero_digitizer[stop_bit_limits[0]:stop_bit_limits[1]] > 10000
                 # Use the average of these points to adjust the bit time for clock drift
                 this_bit_elapsed = np.mean(gps_nonzero_elapsed[stop_bit_limits[0]:stop_bit_limits[1]][unambig]) + sec_per_bit # This is the time of the start bit of the next word.
-            byte = np.flip(byte[1:-1]) # serial data is sent LSB first
-            binary_string = ''.join([str(int(bit)) for bit in byte]) # Convert to binary string
-            ascii_value  = int(binary_string, 2) # Binary string to decimal integer
-            ascii_char = chr(ascii_value) # Decimal integer to ASCII character
+            ascii_char = chr(np.sum(byte[1:-1] * 2**np.arange(8)))
             serial_string += ascii_char # Add the decoded character to the string
         # Split the string into lines and add to the list of NMEA sentences from this packet
         new_infos = [this_string.replace('\r', '') for this_string in serial_string.split('\n') if this_string != '']
@@ -179,7 +179,7 @@ if __name__ == '__main__':
         
 
     # Keep only the NMEA sentences with valid times, and drop duplicates
-    unique_nmea_times = []
+    unique_nmea_times = set()
     unique_nmea_frames = []
     unique_nmea_lats = []
     unique_nmea_lons = []
@@ -188,12 +188,13 @@ if __name__ == '__main__':
             this_nmea_frame = nmea_frames[i]
             this_nmea_lat = nmea_lats[i]
             this_nmea_lon = nmea_lons[i]
-            if this_nmea_time not in unique_nmea_times:
-                unique_nmea_times.append(this_nmea_time.astimezone(timezone.utc).replace(tzinfo=None))
+            this_nmea_time = this_nmea_time.astimezone(timezone.utc).replace(tzinfo=None)
+            if  not this_nmea_time in unique_nmea_times:
+                unique_nmea_times.add(this_nmea_time)
                 unique_nmea_frames.append(this_nmea_frame)
                 unique_nmea_lats.append(this_nmea_lat)
                 unique_nmea_lons.append(this_nmea_lon)
-    unique_nmea_times = np.array(unique_nmea_times).astype('datetime64[s]')
+    unique_nmea_times = np.array(list(unique_nmea_times)).astype('datetime64[s]')
     unique_nmea_frames = np.array(unique_nmea_frames)
     unique_nmea_lats = np.array(unique_nmea_lats)
     unique_nmea_lons = np.array(unique_nmea_lons)
@@ -203,10 +204,8 @@ if __name__ == '__main__':
 
     print('Associating NMEA and PPS...')
     # Associate each reported NMEA time with the previous PPS pulse time
-    actual_nmea_elapsed = np.zeros_like(unique_nmea_elapsed)
-    for i, uncorrected_nmea_elapsed in enumerate(unique_nmea_elapsed):
-        previous_pps = pps_digital_elapsed[pps_digital_elapsed < uncorrected_nmea_elapsed][-1]
-        actual_nmea_elapsed[i] = previous_pps
+    previous_pps = np.searchsorted(pps_digital_elapsed, unique_nmea_elapsed) - 1
+    actual_nmea_elapsed = pps_digital_elapsed[previous_pps]
 
     # Use ffmpeg to read the frame times from the video
     frame_elapsed_json = ffmpeg.probe(input_video, select_streams='v', show_entries='frame=pts_time', of='json')
@@ -234,7 +233,9 @@ if __name__ == '__main__':
         cap = cv2.VideoCapture(input_video)
         # set up mp4 writer
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(args.output_video, fourcc, cap.get(cv2.CAP_PROP_FPS), (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        out = cv2.VideoWriter(args.output_video, fourcc, cap.get(cv2.CAP_PROP_FPS), (frame_width, frame_height))
 
         frame_index = 0
         while cap.isOpened():
@@ -246,7 +247,7 @@ if __name__ == '__main__':
             # Overlay the text on the frame
             text = f'{frame_texts[frame_index]} {frame_latitudes[frame_index]:.5f} {frame_longitudes[frame_index]:.5f}'
             font = cv2.FONT_HERSHEY_SIMPLEX
-            bottomLeftCornerOfText = (10, int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) - 10) # Bottom-left corner of the text string in the image
+            bottomLeftCornerOfText = (10, frame_height - 10) # Bottom-left corner of the text string in the image
             fontScale = 1
             fontColor = (0, 0, 255) # Blue, Green, Red
             lineType = 2
@@ -254,7 +255,7 @@ if __name__ == '__main__':
             cv2.putText(frame, text, bottomLeftCornerOfText, font, fontScale, fontColor, lineType)
             if args.t is not None:
                 (text_width, text_height), baseline = cv2.getTextSize(text, font, fontScale, 1)
-                bottom_left_corner_of_header = (10, int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) - (20 + text_height)) # 10 pixels above the previous text
+                bottom_left_corner_of_header = (10, frame_height - (20 + text_height)) # 10 pixels above the previous text
                 cv2.putText(frame, args.t, bottom_left_corner_of_header, font, fontScale, fontColor, lineType)
 
             # Write the frame to the output video
