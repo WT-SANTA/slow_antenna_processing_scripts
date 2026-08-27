@@ -233,39 +233,51 @@ if __name__ == '__main__':
     if args.output_video is not None:
         frame_texts = frame_absolute_times.astype(str)
         # Read the input video
-        cap = cv2.VideoCapture(input_video)
-        # set up mp4 writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        out = cv2.VideoWriter(args.output_video, fourcc, cap.get(cv2.CAP_PROP_FPS), (frame_width, frame_height))
+        # The probe above already carries the stream info, so nothing needs to be decoded here.
+        video_stream = next(s for s in frame_elapsed_json['streams'] if s['codec_type'] == 'video')
+        frame_width, frame_height = int(video_stream['width']), int(video_stream['height'])
+        fps_num, fps_den = video_stream['avg_frame_rate'].split('/')
+        fps = int(fps_num) / int(fps_den)
 
-        frame_index = 0
-        while cap.isOpened():
-            print(f'Overlaying: {frame_index/len(frame_texts)*100:.2f}%')
-            ret, frame = cap.read()
-            if not ret:
-                break
+        font, fontScale, lineThickness, lineType = cv2.FONT_HERSHEY_SIMPLEX, 1, 1, cv2.LINE_AA
+        fontColor = (0, 0, 204, 255) # BGRA - the alpha channel is what lets ffmpeg composite this
 
-            # Overlay the text on the frame
-            text = f'{frame_texts[frame_index]} {frame_latitudes[frame_index]:.5f} {frame_longitudes[frame_index]:.5f}'
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            bottomLeftCornerOfText = (10, frame_height - 10) # Bottom-left corner of the text string in the image
-            fontScale = 1
-            fontColor = (0, 0, 255) # Blue, Green, Red
-            linewidth = 1
-            lineType = cv2.LINE_AA
+        # Size the band from the widest line we will draw, so we pipe as few bytes as possible
+        texts = [f'{frame_texts[i]} {frame_latitudes[i]:.5f} {frame_longitudes[i]:.5f}'
+                 for i in range(len(frame_texts))]
+        (text_width, text_height), baseline = cv2.getTextSize(max(texts, key=len), font, fontScale, lineThickness)
+        if args.t is not None:
+            text_width = max(text_width, cv2.getTextSize(args.t, font, fontScale, lineThickness)[0][0])
+        line_height = text_height + baseline + 10
+        band_width = text_width + 20
+        band_height = line_height * (2 if args.t is not None else 1) + 10
 
-            cv2.putText(frame, text, bottomLeftCornerOfText, font, fontScale, fontColor, linewidth, lineType)
+        # ffmpeg decodes the video, composites our band over it, and encodes - all internally
+        # threaded. Only the band crosses into Python, so no full frame is ever copied here.
+        video_in = ffmpeg.input(input_video)
+        band_in = ffmpeg.input('pipe:', format='rawvideo', pix_fmt='bgra',
+                               s=f'{band_width}x{band_height}', r=fps)
+        composited = ffmpeg.overlay(video_in['v'], band_in, x=10, y=frame_height - band_height - 10,
+                                    shortest=1, format='auto')
+        ffmpeg_proc = (
+            ffmpeg
+            .output(composited, args.output_video, vcodec='libx264', preset='veryfast', crf=20,
+                    pix_fmt='yuv420p', an=None) # an=None emits a bare -an, dropping the audio track
+            .global_args('-loglevel', 'error')
+            .overwrite_output()
+            # stderr is deliberately left attached to the terminal: piping it while we write to
+            # stdin risks filling ffmpeg's stderr buffer and deadlocking both processes.
+            .run_async(pipe_stdin=True)
+        )
+
+        band = np.zeros((band_height, band_width, 4), dtype=np.uint8)
+        for frame_index, text in enumerate(texts):
+            print(f'Overlaying: {frame_index/len(texts)*100:.2f}%')
+            band[:] = 0 # fully transparent background
+            cv2.putText(band, text, (10, band_height - 10), font, fontScale, fontColor, lineThickness, lineType)
             if args.t is not None:
-                (text_width, text_height), baseline = cv2.getTextSize(text, font, fontScale, 1)
-                bottom_left_corner_of_header = (10, frame_height - (20 + text_height)) # 10 pixels above the previous text
-                cv2.putText(frame, args.t, bottom_left_corner_of_header, font, fontScale, fontColor, linewidth, lineType)
-
-            # Write the frame to the output video
-            out.write(frame)
-            frame_index += 1
-
-        cap.release()
-        out.release()
-        cv2.destroyAllWindows()
+                cv2.putText(band, args.t, (10, band_height - 10 - line_height), font, fontScale, fontColor, lineThickness, lineType)
+            ffmpeg_proc.stdin.write(band.tobytes())
+        ffmpeg_proc.stdin.close()
+        if ffmpeg_proc.wait() != 0:
+            raise RuntimeError('ffmpeg failed while writing the overlay video')
