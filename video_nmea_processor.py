@@ -137,6 +137,10 @@ if __name__ == '__main__':
                 # Select 1 second around the stop bit
                 stop_bit_elapseds = np.array([bit_elapseds[-1]-sec_per_bit, bit_elapseds[-1]+sec_per_bit])
                 stop_bit_limits = np.searchsorted(gps_nonzero_elapsed, stop_bit_elapseds)
+                if stop_bit_limits[0] == stop_bit_limits[1]:
+                    # If the stop bit limits are the same, we are at the end of the packet and cannot adjust for clock drift. Just increment by 1 bit time.
+                    this_bit_elapsed += sec_per_bit
+                    continue
                 # Find the points in the stop bit that are most clearly "signal high"
                 unambig = gps_nonzero_signal[stop_bit_limits[0]:stop_bit_limits[1]] - gps_nonzero_digitizer[stop_bit_limits[0]:stop_bit_limits[1]] > 10000
                 # Use the average of these points to adjust the bit time for clock drift
@@ -159,15 +163,15 @@ if __name__ == '__main__':
             this_nmea_msg = pynmea2.parse(info)
             try:
                 this_nmea_time = this_nmea_msg.datetime
-            except AttributeError:
+            except Exception:
                 this_nmea_time = None
             try:
                 this_nmea_lat = this_nmea_msg.latitude
-            except AttributeError:
+            except Exception:
                 this_nmea_lat = None
             try:
                 this_nmea_lon = this_nmea_msg.longitude
-            except AttributeError:
+            except Exception:
                 this_nmea_lon = None
         except (pynmea2.ChecksumError, pynmea2.ParseError) as e:
             this_nmea_msg = None
@@ -185,6 +189,7 @@ if __name__ == '__main__':
     unique_nmea_frames = []
     unique_nmea_lats = []
     unique_nmea_lons = []
+    total_success = 0
     for i, this_nmea_time in enumerate(nmea_times):
         if this_nmea_time is not None:
             this_nmea_frame = nmea_frames[i]
@@ -197,6 +202,8 @@ if __name__ == '__main__':
                 unique_nmea_frames.append(this_nmea_frame)
                 unique_nmea_lats.append(this_nmea_lat)
                 unique_nmea_lons.append(this_nmea_lon)
+                total_success += 1
+    print(f'Parsed {total_success} unique NMEA sentences with valid times')
     unique_nmea_times = np.array(list(unique_nmea_times)).astype('datetime64[s]')
     unique_nmea_frames = np.array(unique_nmea_frames)
     unique_nmea_lats = np.array(unique_nmea_lats)
