@@ -264,6 +264,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Plot Slow Antenna .raw data')
     parser.add_argument('-i', '--input', nargs='+', help='Path or paths to slow antenna files to convert.')
     parser.add_argument('-o', '--output', help='Directory to save netCDF output files. If unspecified, will save in a "processed" subdirectory of the directory of the input files.')
+    parser.add_argument('--output-tree', help='Override the \'output\' argument and specify a root directory for the output tree. The output files will be saved in subdirectories matching the pattern of the input files, but with the root directory replaced by this argument. This is useful for processing files in a different directory structure than the input files.')
     parser.add_argument('-m', '--hardware-metadata', default='./hardware.csv', help='Path to a CSV file containing hardware metadata history for the sensor network.')
     parser.add_argument('--sample-rate', type=int, default=9600, help='Sample rate of the ADC in samples/second. Default is 9600.')
     args = parser.parse_args()
@@ -271,7 +272,13 @@ if __name__ == '__main__':
         
     SAMPLE_RATE = args.sample_rate
     if args.input is not None:
-        files_input = args.input
+        if len(args.input) == 1:
+            if os.path.isdir(args.input[0]):
+                files_input = sorted(glob(os.path.join(args.input[0], '**/*.raw'), recursive=True))
+            else:
+                files_input = args.input
+        else:
+            files_input = args.input
     else:
         files_input = sorted(glob('./input/**/*.raw', recursive=True))
     files = []
@@ -332,10 +339,15 @@ if __name__ == '__main__':
         # Process each deployment in parallel, with dask. Each deployment is a set of files that are continouous in time, so we can use the end of one file to correct the next.
         for this_deployment_metadata_df in all_deployments_metadata_df:
             # Find output dir if unspecified, then submit the processing job to dask.
-            if args.output is None:
-                output_dir = os.path.join(os.path.dirname(this_deployment_metadata_df.iloc[0]['path']), 'processed')
+            if args.output_tree is not None:
+                # Replace the root of the input path with the output tree root
+                input_root = os.path.commonpath(this_deployment_metadata_df['path'])
+                output_dir = os.path.join(args.output_tree, os.path.relpath(os.path.dirname(this_deployment_metadata_df.iloc[0]['path']), input_root))
             else:
-                output_dir = args.output
+                if args.output is None:
+                    output_dir = os.path.join(os.path.dirname(this_deployment_metadata_df.iloc[0]['path']), 'processed')
+                else:
+                    output_dir = args.output
             # For the first file in the deployment, there is no previous file to use for correction, so set previous_filepath to None. 
             if len(this_deployment_metadata_df) > 1:
                 all_res.append((this_deployment_metadata_df.iloc[0]['path'],
@@ -349,10 +361,15 @@ if __name__ == '__main__':
                 continue
             # For subsequent files, use the previous file in the deployment.
             for i in range(2, len(this_deployment_metadata_df)):
-                if args.output is None:
-                    output_dir = os.path.join(os.path.dirname(this_deployment_metadata_df.iloc[i]['path']), 'processed')
+                if args.output_tree is not None:
+                    # Replace the root of the input path with the output tree root
+                    input_root = os.path.commonpath(this_deployment_metadata_df['path'])
+                    output_dir = os.path.join(args.output_tree, os.path.relpath(os.path.dirname(this_deployment_metadata_df.iloc[i]['path']), input_root))
                 else:
-                    output_dir = args.output
+                    if args.output is None:
+                        output_dir = os.path.join(os.path.dirname(this_deployment_metadata_df.iloc[i]['path']), 'processed')
+                    else:
+                        output_dir = args.output
                 all_res.append((this_deployment_metadata_df.iloc[i-1]['path'],
                                 client.submit(process_file_pair, this_deployment_metadata_df.iloc[i-1],
                                             this_deployment_metadata_df.iloc[i],
