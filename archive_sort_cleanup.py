@@ -15,7 +15,7 @@ import h5py
 from pyxlma import coords
 
 
-def copy_file(old_path, new_path, reason=None, dry_run=True):
+def copy_file(old_path, new_path, reason=None, dry_run=True, skip_crc=False):
     if old_path == new_path:
         return
     if reason is not None:
@@ -28,6 +28,8 @@ def copy_file(old_path, new_path, reason=None, dry_run=True):
         print(f'Copying {old_path} to {new_path}{reason_str}')
         Path(path.dirname(new_path)).mkdir(parents=True, exist_ok=True)
         if path.exists(new_path):
+            if skip_crc:
+                return
             with open(old_path, 'rb') as f:
                 old_crc = crc32(f.read())
             with open(new_path, 'rb') as f:
@@ -167,7 +169,7 @@ def create_cpu_serial_log(filenames_parsed):
     cpu_serial_df.to_csv(args.cpu_serial_log, index=True)
 
 
-def sort_files(filenames_parsed, archive_root):
+def sort_files(filenames_parsed, archive_root, skip_crc=False):
     files_to_move = filenames_parsed.loc[filenames_parsed['keep']]
     for i, parsed in files_to_move.iterrows():
         if np.isnan(parsed['cpu_id']):
@@ -182,11 +184,11 @@ def sort_files(filenames_parsed, archive_root):
 
         new_path = path.join(archive_root, f'{parsed["dt"].strftime("%Y%m%d")}', f'sensor_{str(int(parsed["sensor_num"])).zfill(2)}', 
                                 f'{parsed["dt"].strftime("%Y%m%d_%H%M%S_%f")}_{this_lat}_{this_lon}_{this_alt}_{this_gps_err}_{this_cpu_id}_{this_relay}.raw')
-        copy_file(old_raw_path, new_path, dry_run=args.dry_run)
+        copy_file(old_raw_path, new_path, dry_run=args.dry_run, skip_crc=skip_crc)
         print(f'Processed file {i+1} of {files_to_move.shape[0]}')
 
 
-def move_log_files(unsorted_files_dir, archive_root):
+def move_log_files(unsorted_files_dir, archive_root, skip_crc=False):
     log_files = glob(path.join(unsorted_files_dir, '**', 'SA_log.out'), recursive=True)
     log_files += glob(path.join(unsorted_files_dir, '**', 'cronjobs_help.sh'), recursive=True)
     log_files += glob(path.join(unsorted_files_dir, '**', 'cronlog.txt'), recursive=True)
@@ -196,7 +198,7 @@ def move_log_files(unsorted_files_dir, archive_root):
     for log_file in log_files:
         new_path = log_file.replace(unsorted_files_dir, archive_root)
         if path.exists(path.dirname(new_path)):
-            copy_file(log_file, new_path, reason='log file', dry_run=args.dry_run)
+            copy_file(log_file, new_path, reason='log file', dry_run=args.dry_run, skip_crc=skip_crc)
         else:
             unhandleable_file(f'Could not find destination directory for log file {log_file}. Expected to find {path.dirname(new_path)}. Please resolve this issue manually.', dry_run=args.dry_run)
 
@@ -287,6 +289,7 @@ if __name__ == '__main__':
     parser.add_argument('--cpu-serial-log', '-c', type=str, default=None, help='Path to a CSV file logging CPU serial numbers and their associated sensor numbers and deployment dates. Leave unspecified to skip.')
     parser.add_argument('--history-file', type=str, help='Path to a CSV file logging the history of previous deployments that collected \'old old\' or \'old\' data. Files with data collection dates that fall within the date ranges of these deployments will be renamed to the current filename specification and sorted into the archive according to their collection date and sensor number.')
     parser.add_argument('--debug-dataframe', '-d', type=str, default=None, help='Path to write the dataframe containing all parsed filename information and pruning decisions to a CSV for debugging purposes. Leave unspecified to skip.')
+    parser.add_argument('--skip-crc-check', action='store_true', default=False, help='When a file already exists in the archive, skip the CRC32 check and continue without overwriting the file.')
 
     args = parser.parse_args()
     if not args.dry_run:
@@ -322,10 +325,10 @@ if __name__ == '__main__':
         filenames_parsed = filter_triggers(filenames_parsed)
         filenames_parsed['keep'] = filenames_parsed['keep'] & ~filenames_parsed['filtered_by_trigger']
     filenames_parsed = filenames_parsed.sort_values('dt').reset_index(drop=True)
-    sort_files(filenames_parsed, args.archive_root)
+    sort_files(filenames_parsed, args.archive_root, skip_crc=args.skip_crc_check)
     if args.debug_dataframe is not None:
         if args.debug_dataframe.endswith('.csv'):
             filenames_parsed.to_csv(args.debug_dataframe, index=False)
         elif args.debug_dataframe.endswith('.parquet'):
             filenames_parsed.to_parquet(args.debug_dataframe, index=False)
-    move_log_files(args.unsorted_files, args.archive_root)
+    move_log_files(args.unsorted_files, args.archive_root, skip_crc=args.skip_crc_check)
