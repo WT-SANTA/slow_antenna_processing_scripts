@@ -26,12 +26,14 @@ if __name__ == '__main__':
     about_to_exit_flag = False
     while True:
         paths_to_process = [p.absolute() for p in Path(args.ingest_dir).rglob('*.raw')]
+        paths_to_process += [p.absolute() for p in Path(args.ingest_dir).rglob('*.raw.gz')]
         paths_to_process = [p for p in paths_to_process if p.name not in error_files]
         if len(paths_to_process) == 0:
             if about_to_exit_flag:
                 if len(error_files) > 0:
                     print(f'The following files were not sorted due to errors:\n{"\n".join(error_files)}')
                     rawfile_abs_paths = [str(p.absolute()) for p in Path(args.ingest_dir).rglob('*.raw')]
+                    rawfile_abs_paths += [str(p.absolute()) for p in Path(args.ingest_dir).rglob('*.raw.gz')]
                     print('All raw file absolute paths remaining: \n' + '\n'.join(rawfile_abs_paths))
                 else:
                     print('All files sorted!')

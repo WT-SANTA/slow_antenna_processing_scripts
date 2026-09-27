@@ -56,7 +56,7 @@ def parse_all_filenames(raw_paths):
             filenames_parsed.append(parsed)
         except ValueError as e:
             if 'does not match any known filename specifications' in str(e) and len(f.split('_')) == 6:
-                rawfile_split = f.replace('.raw', '').split('_')
+                rawfile_split = f.replace('.gz', '').replace('.raw', '').split('_')
                 this_date = dt.strptime(rawfile_split[0]+rawfile_split[1]+rawfile_split[2], '%Y%m%d%H%M%S%f')
                 this_cpu = int(rawfile_split[4], 16)
                 this_relay = rawfile_split[5]
@@ -183,7 +183,11 @@ def sort_files(filenames_parsed, archive_root, skip_crc=False):
         this_relay = parsed["relay"] if parsed["relay"] in ['a', 'b', 'c'] else ''
 
         new_path = path.join(archive_root, f'{parsed["dt"].strftime("%Y%m%d")}', f'sensor_{str(int(parsed["sensor_num"])).zfill(2)}', 
-                                f'{parsed["dt"].strftime("%Y%m%d_%H%M%S_%f")}_{this_lat}_{this_lon}_{this_alt}_{this_gps_err}_{this_cpu_id}_{this_relay}.raw')
+                                f'{parsed["dt"].strftime("%Y%m%d_%H%M%S_%f")}_{this_lat}_{this_lon}_{this_alt}_{this_gps_err}_{this_cpu_id}_{this_relay}')
+        if parsed['gzipped']:
+            new_path += '.raw.gz'
+        else:
+            new_path += '.raw'
         copy_file(old_raw_path, new_path, dry_run=args.dry_run, skip_crc=skip_crc)
         print(f'Processed file {i+1} of {files_to_move.shape[0]}')
 
@@ -306,6 +310,8 @@ if __name__ == '__main__':
         history_df = pd.DataFrame(columns=['sensor_num', 'start_date', 'end_date', 'lat', 'lon', 'alt', 'cpu_id', 'relay', 'needs_utc_correction'])
     # Get full paths to all raw files
     raw_files = glob(path.join(args.unsorted_files, '**', '*.raw'), recursive=True)
+    raw_files += glob(path.join(args.unsorted_files, '**', '*.raw.gz'), recursive=True)
+    raw_files = sorted(raw_files)
     raw_paths = [Path(f) for f in raw_files]
     # Do all the processing things
     filenames_parsed = parse_all_filenames(raw_paths)

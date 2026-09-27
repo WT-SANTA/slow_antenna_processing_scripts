@@ -261,7 +261,7 @@ def process_file_pair(file_info_1, file_info_2, output_dir, previous_filepath=No
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Plot Slow Antenna .raw data')
+    parser = argparse.ArgumentParser(description='Convert slow antenna raw data files to netCDF format, applying available calibrations and metadata.')
     parser.add_argument('-i', '--input', nargs='+', help='Path or paths to slow antenna files to convert.')
     parser.add_argument('-o', '--output', help='Directory to save netCDF output files. If unspecified, will save in a "processed" subdirectory of the directory of the input files.')
     parser.add_argument('--output-tree', help='Override the \'output\' argument and specify a root directory for the output tree. The output files will be saved in subdirectories matching the pattern of the input files, but with the root directory replaced by this argument. This is useful for processing files in a different directory structure than the input files.')
@@ -274,13 +274,17 @@ if __name__ == '__main__':
     if args.input is not None:
         if len(args.input) == 1:
             if os.path.isdir(args.input[0]):
-                files_input = sorted(glob(os.path.join(args.input[0], '**/*.raw'), recursive=True))
+                files_input = glob(os.path.join(args.input[0], '**/*.raw'), recursive=True)
+                files_input += glob(os.path.join(args.input[0], '**/*.raw.gz'), recursive=True)
+                files_input = sorted(files_input)
             else:
                 files_input = args.input
         else:
             files_input = args.input
     else:
-        files_input = sorted(glob('./input/**/*.raw', recursive=True))
+        files_input = glob('./input/**/*.raw', recursive=True)
+        files_input += glob('./input/**/*.raw.gz', recursive=True)
+        files_input = sorted(files_input)
     files = []
     filenames = []
     file_metadata_list = []

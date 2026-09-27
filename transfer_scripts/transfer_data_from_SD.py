@@ -150,7 +150,7 @@ if __name__ == '__main__':
         with SSHClient() as client:
             client.set_missing_host_key_policy(AutoAddPolicy())
             client.connect('raspberrypi.local', username='pi', password='raspberry')
-            stdin, stdout, stderr = client.exec_command('rm -rf /home/pi/Desktop/DATA/*.raw')
+            stdin, stdout, stderr = client.exec_command('rm -rf /home/pi/Desktop/DATA/*.raw*')
             print(stderr.read().decode())
             print('Done!')
     print('You may now disconnect and power off the slow antenna.')

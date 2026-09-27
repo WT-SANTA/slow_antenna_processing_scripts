@@ -34,14 +34,15 @@ def parse_filename(filename):
         'lat': np.nan,
         'alt': np.nan,
         'gps_err': 0,
-        'cpu_id': np.nan
+        'cpu_id': np.nan,
+        'gzipped' : filename.endswith('.gz')
     }
-    rawfile_split = filename.replace('.raw', '').split('_')
+    rawfile_split = filename.replace('.gz', '').replace('.raw', '').split('_')
     match len(rawfile_split):
         case 2:
             # this is an 'old old' file type
             out_dict['filename_spec'] = 1
-            out_dict['dt'] = dt.strptime(filename, '%Y%m%d%H%M%S_%f.raw')
+            out_dict['dt'] = dt.strptime(filename.replace('.gz', '').replace('.raw', ''), '%Y%m%d%H%M%S_%f')
         case 3:
             # this is an 'old' file type
             out_dict['filename_spec'] = 2
