@@ -4,6 +4,26 @@
 
 import numpy as np
 from datetime import datetime as dt
+import gzip
+
+class open_gzip_or_dat:
+    """Helper class open a file with gzip if necessary or as binary if already decompressed.
+
+    Use as a context manager in the same way as `with open(filename) as f:`. If the filename ends with
+    '.gz', the file will be decompressed with gzip. Otherwise, the file will be opened as binary.
+    """
+    def __init__(self, filename):
+        self.filename = filename
+
+    def __enter__(self):
+        if self.filename.endswith('.gz'):
+            self.file = gzip.open(self.filename)
+        else:
+            self.file = open(self.filename, 'rb')
+        return self.file
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.file.close()
 
 def parse_filename(filename):
     out_dict = {
@@ -69,7 +89,7 @@ def rotate_SA_array(this_bytes, packet_length=9, previous_file=None):
         if j >= packet_length:
             raise ValueError('Could not find first ADC packet in file.')
     if previous_file and j > 0:
-        with open(previous_file, 'rb') as f:
+        with open_gzip_or_dat(previous_file) as f:
             f.seek(-packet_length+j, 2)
             last_ba = f.read()
         last_bytes = np.frombuffer(last_ba, dtype=np.uint8)
@@ -83,7 +103,7 @@ def rotate_SA_array(this_bytes, packet_length=9, previous_file=None):
 
 
 def read_SA_file(file_to_read, packet_length=9, previous_file=None):
-    with open(file_to_read, 'rb') as f:
+    with open_gzip_or_dat(file_to_read) as f:
         ba = f.read()
     this_bytes = np.frombuffer(ba, dtype=np.uint8)
     return rotate_SA_array(this_bytes, packet_length=packet_length, previous_file=previous_file)
