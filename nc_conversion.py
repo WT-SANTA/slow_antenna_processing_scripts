@@ -345,7 +345,7 @@ if __name__ == '__main__':
             # Find output dir if unspecified, then submit the processing job to dask.
             if args.output_tree is not None:
                 # Replace the root of the input path with the output tree root
-                input_root = os.path.commonpath(this_deployment_metadata_df['path'])
+                input_root = os.path.commonpath(file_metadata_df['path'])
                 output_dir = os.path.join(args.output_tree, os.path.relpath(os.path.dirname(this_deployment_metadata_df.iloc[0]['path']), input_root))
             else:
                 if args.output is None:
@@ -367,7 +367,7 @@ if __name__ == '__main__':
             for i in range(2, len(this_deployment_metadata_df)):
                 if args.output_tree is not None:
                     # Replace the root of the input path with the output tree root
-                    input_root = os.path.commonpath(this_deployment_metadata_df['path'])
+                    input_root = os.path.commonpath(file_metadata_df['path'])
                     output_dir = os.path.join(args.output_tree, os.path.relpath(os.path.dirname(this_deployment_metadata_df.iloc[i]['path']), input_root))
                 else:
                     if args.output is None:
