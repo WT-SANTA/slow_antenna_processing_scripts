@@ -170,7 +170,7 @@ def create_cpu_serial_log(filenames_parsed):
 
 
 def sort_files(filenames_parsed, archive_root, skip_crc=False):
-    files_to_move = filenames_parsed.loc[filenames_parsed['keep']]
+    files_to_move = filenames_parsed.loc[filenames_parsed['keep']].reset_index(drop=True)
     for i, parsed in files_to_move.iterrows():
         if np.isnan(parsed['cpu_id']):
             continue
