@@ -287,7 +287,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Slow antenna archive pruning and sorting.')
     parser.add_argument('--unsorted-files', '-u', type=str, required=True, default='/mnt/reservoir/SA_DATA_UNSORTED/SA_DATA/', help='Top level directory of unsorted slow antenna data.')
     parser.add_argument('--archive-root', '-r', type=str, default='/mnt/reservoir/SA_DATA/', help='Top level directory of slow antenna data archive.')
-    parser.add_argument('--lma-data', '-l', type=str, default=None, help='Directory containing LMA data for correlation with slow antenna data. On rime as of Oct. 2025, this is "/archive/lmaclimo/h5_files/". Leave unspecified to skip pruning.')
+    parser.add_argument('--lma-data', '-l', nargs='*', help='Directory containing LMA data for correlation with slow antenna data. On rime as of Oct. 2025, this is "/archive/lmaclimo/h5_files/". Leave unspecified to skip pruning.')
     parser.add_argument('--trigger', '-t', action='store_true', default=False, help='Whether to prune based on the presence of lightning impulses in the slow antenna data.')
     parser.add_argument('--dry-run', '-n', action='store_true', help='Log actions without making any changes.')
     parser.add_argument('--cpu-serial-log', '-c', type=str, default=None, help='Path to a CSV file logging CPU serial numbers and their associated sensor numbers and deployment dates. Leave unspecified to skip.')
@@ -328,8 +328,11 @@ if __name__ == '__main__':
     filenames_parsed = filter_empty(filenames_parsed)
     filenames_parsed['keep'] = filenames_parsed['keep'] & ~filenames_parsed['filtered_by_empty']
     if args.lma_data is not None:
-        filenames_parsed = filter_lma(filenames_parsed, args.lma_data)
-        filenames_parsed['keep'] = filenames_parsed['keep'] & ~filenames_parsed['filtered_by_lma']
+        if isinstance(args.lma_data, str):
+            args.lma_data = [args.lma_data]
+        for lma_path in args.lma_data:
+            filenames_parsed = filter_lma(filenames_parsed, lma_path)
+            filenames_parsed['keep'] = filenames_parsed['keep'] & ~filenames_parsed['filtered_by_lma']
     if args.trigger:
         filenames_parsed = filter_triggers(filenames_parsed)
         filenames_parsed['keep'] = filenames_parsed['keep'] & ~filenames_parsed['filtered_by_trigger']
