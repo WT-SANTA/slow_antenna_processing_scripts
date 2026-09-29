@@ -294,7 +294,7 @@ if __name__ == '__main__':
     parser.add_argument('--history-file', type=str, help='Path to a CSV file logging the history of previous deployments that collected \'old old\' or \'old\' data. Files with data collection dates that fall within the date ranges of these deployments will be renamed to the current filename specification and sorted into the archive according to their collection date and sensor number.')
     parser.add_argument('--debug-dataframe', '-d', type=str, default=None, help='Path to write the dataframe containing all parsed filename information and pruning decisions to a CSV for debugging purposes. Leave unspecified to skip.')
     parser.add_argument('--skip-crc-check', action='store_true', default=False, help='When a file already exists in the archive, skip the CRC32 check and continue without overwriting the file.')
-
+    parser.add_argument('--after', '-a', type=str, default=None, help='Only process files with a collection date after this date. Format: %Y%m%d')
     args = parser.parse_args()
     if not args.dry_run:
         print('----> FILESYSTEM CHANGES CAN BE PERFORMED <----')
@@ -315,6 +315,9 @@ if __name__ == '__main__':
     raw_paths = [Path(f) for f in raw_files]
     # Do all the processing things
     filenames_parsed = parse_all_filenames(raw_paths)
+    if args.after is not None:
+        after_dt = dt.strptime(args.after, '%Y%m%d')
+        filenames_parsed = filenames_parsed.loc[filenames_parsed['dt'] > after_dt]
     filenames_parsed = associate_sensor_nums(filenames_parsed)
     if args.cpu_serial_log is not None:
         create_cpu_serial_log(filenames_parsed)
