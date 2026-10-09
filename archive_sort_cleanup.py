@@ -90,19 +90,20 @@ def parse_all_filenames(raw_paths):
     return filenames_parsed
 
 def associate_sensor_nums(filenames_parsed):
-    filenames_parsed['sensor_dir'] = ''
-    filenames_parsed['sensor_num'] = 0
-    for i, rp in enumerate(filenames_parsed['raw_path']):
-        parts = rp.parts
-        psbl_sensor_paths = [p for p in parts if 'sensor_' in p]
+    psbl_sensor_dirs = filenames_parsed['raw_path'].map(lambda raw_path: raw_path.parent)
+    sensor_dirs = {}
+    sensor_nums = {}
+    for psbl_sensor_dir in psbl_sensor_dirs.unique():
+        psbl_sensor_paths = [p for p in psbl_sensor_dir.parts if 'sensor_' in p]
         if len(psbl_sensor_paths) != 1:
             unhandleable_file(f'Could not find sensor directory in path {rp}', dry_run=args.dry_run)
-        else:
-            filenames_parsed.at[i, 'sensor_dir'] = psbl_sensor_paths[0]
-            try:
-                filenames_parsed.at[i, 'sensor_num'] = int(psbl_sensor_paths[0].replace('sensor_', ''))
-            except ValueError:
-                unhandleable_file(f'Could not parse sensor number from directory {psbl_sensor_paths[0]} in path {rp}', dry_run=args.dry_run)
+            continue
+        sensor_dir = psbl_sensor_paths[0]
+        sensor_num = int(sensor_dir.replace('sensor_', ''))
+        sensor_dirs[psbl_sensor_dir] = sensor_dir
+        sensor_nums[psbl_sensor_dir] = sensor_num
+    filenames_parsed['sensor_dir'] = filenames_parsed['raw_path'].map(lambda raw_path: sensor_dirs.get(raw_path.parent, ''))
+    filenames_parsed['sensor_num'] = filenames_parsed['raw_path'].map(lambda raw_path: sensor_nums.get(raw_path.parent, 0))
     return filenames_parsed
 
 def upgrade_old_filenames(filenames_parsed, history_df):
@@ -139,20 +140,24 @@ def upgrade_old_filenames(filenames_parsed, history_df):
 
 
 def fix_issue_three(filenames_parsed):
-    issue_3_files = filenames_parsed.loc[(filenames_parsed['filename_spec'] == 3) & (filenames_parsed['gps_err'] == 0) & (filenames_parsed['lat'].isna()) & (filenames_parsed['lon'].isna()) & (filenames_parsed['alt'].isna())]
-    for i, row in issue_3_files.iterrows():
-        nearby_files = filenames_parsed.loc[(filenames_parsed['filename_spec'] == 3) & 
-                                            (filenames_parsed['dt'] >= row['dt'] - timedelta(minutes=3)) &
-                                            (filenames_parsed['dt'] <= row['dt'] + timedelta(minutes=3)) &
-                                            (filenames_parsed['sensor_num'] == row['sensor_num'])]
-        if len(nearby_files) == 0:
+    window = np.timedelta64(3, 'm')
+    filespec_3 = filenames_parsed.loc[filenames_parsed['filename_spec'] == 3]
+    issue_3_mask = (filenames_parsed['filename_spec'] == 3) & (filenames_parsed['gps_err'] == 0) & (filenames_parsed['lat'].isna()) & (filenames_parsed['lon'].isna()) & (filenames_parsed['alt'].isna())
+    for _, group in filespec_3.sort_values('dt').groupby(['sensor_num']):
+        to_fix = group.loc[issue_3_mask[group.index]]
+        if len(to_fix) == 0:
             continue
-        nearby_lons = np.nanmean(nearby_files['lon'])
-        nearby_lats = np.nanmean(nearby_files['lat'])
-        nearby_alts = np.nanmean(nearby_files['alt'])
-        filenames_parsed.at[i, 'lon'] = nearby_lons
-        filenames_parsed.at[i, 'lat'] = nearby_lats
-        filenames_parsed.at[i, 'alt'] = nearby_alts
+        times = group['dt'].values
+        lower_bound = np.searchsorted(times, to_fix['dt'].values - window, side='left')
+        upper_bound = np.searchsorted(times, to_fix['dt'].values + window, side='right')
+        for col in ['lat', 'lon', 'alt']:
+            recorded_positions = group[col].values
+            recorded_positions =recorded_positions[~np.isnan(recorded_positions)]
+            sums = np.concatenate([[0], np.cumsum(np.where(valid, vals, 0))])
+            counts = np.concatenate([[0], np.cumsum(valid)])
+            with np.errstate(invalid='ignore', divide='ignore'):
+                val = (sums[upper_bound] - sums[lower_bound]) / (counts[upper_bound] - counts[lower_bound])
+            filenames_parsed.loc[to_fix.index, col] = val
     return filenames_parsed
 
 
