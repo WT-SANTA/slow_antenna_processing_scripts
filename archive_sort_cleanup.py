@@ -96,7 +96,7 @@ def associate_sensor_nums(filenames_parsed):
     for psbl_sensor_dir in psbl_sensor_dirs.unique():
         psbl_sensor_paths = [p for p in psbl_sensor_dir.parts if 'sensor_' in p]
         if len(psbl_sensor_paths) != 1:
-            unhandleable_file(f'Could not find sensor directory in path {rp}', dry_run=args.dry_run)
+            unhandleable_file(f'Could not find sensor directory in path {psbl_sensor_dir}', dry_run=args.dry_run)
             continue
         sensor_dir = psbl_sensor_paths[0]
         sensor_num = int(sensor_dir.replace('sensor_', ''))
@@ -225,6 +225,7 @@ def filter_lma(filenames_parsed, lma_data_path):
     files_that_can_be_pruned = filenames_parsed.loc[~filenames_parsed['dt'].isna() & ~filenames_parsed['lat'].isna() & ~filenames_parsed['lon'].isna()]
     days_in_data = files_that_can_be_pruned['dt'].dt.normalize().dropna().unique()
     lma_lat, lma_lon, lma_alt = None, None, None
+    file_days = filenames_parsed['dt'].dt.normalize()
     for this_date in sorted(pd.to_datetime(days_in_data)):
         df_this_day = files_that_can_be_pruned.loc[(files_that_can_be_pruned['dt'] >= this_date) & (files_that_can_be_pruned['dt'] < this_date + timedelta(days=1))]
         df_this_day = df_this_day[~df_this_day['lat'].isna() & ~df_this_day['lon'].isna() & ~df_this_day['alt'].isna()]
@@ -281,10 +282,9 @@ def filter_lma(filenames_parsed, lma_data_path):
                         continue
                     distances = ((sensor_X[i] - flash_X[lower_bound:upper_bound])**2 + (sensor_Y[i] - flash_Y[lower_bound:upper_bound])**2 + (sensor_Z[i] - flash_Z[lower_bound:upper_bound])**2)**0.5
                     flashes_nearby[i] = np.any(distances <= 100e3) # 100 km
-                paths_to_rm = df_this_day.loc[~flashes_nearby, 'raw_path']
-                filenames_parsed.loc[filenames_parsed['raw_path'].isin(paths_to_rm), 'filtered_by_lma'] = True
+                filenames_parsed.loc[df_this_day.index[~flashes_nearby], 'filtered_by_lma'] = True
             else:
-                filenames_parsed.loc[filenames_parsed['dt'].dt.normalize() == this_date, 'filtered_by_lma'] = True
+                filenames_parsed.loc[file_days == this_date, 'filtered_by_lma'] = True
     return filenames_parsed
 
 
