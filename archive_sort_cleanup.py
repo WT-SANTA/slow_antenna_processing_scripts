@@ -152,9 +152,9 @@ def fix_issue_three(filenames_parsed):
         upper_bound = np.searchsorted(times, to_fix['dt'].values + window, side='right')
         for col in ['lat', 'lon', 'alt']:
             recorded_positions = group[col].values
-            recorded_positions =recorded_positions[~np.isnan(recorded_positions)]
-            sums = np.concatenate([[0], np.cumsum(np.where(valid, vals, 0))])
-            counts = np.concatenate([[0], np.cumsum(valid)])
+            nannan_positions = ~np.isnan(recorded_positions)
+            sums = np.concatenate([[0], np.cumsum(np.where(nannan_positions, recorded_positions, 0))])
+            counts = np.concatenate([[0], np.cumsum(nannan_positions)])
             with np.errstate(invalid='ignore', divide='ignore'):
                 val = (sums[upper_bound] - sums[lower_bound]) / (counts[upper_bound] - counts[lower_bound])
             filenames_parsed.loc[to_fix.index, col] = val
@@ -227,6 +227,9 @@ def filter_lma(filenames_parsed, lma_data_path):
     lma_lat, lma_lon, lma_alt = None, None, None
     for this_date in sorted(pd.to_datetime(days_in_data)):
         df_this_day = files_that_can_be_pruned.loc[(files_that_can_be_pruned['dt'] >= this_date) & (files_that_can_be_pruned['dt'] < this_date + timedelta(days=1))]
+        df_this_day = df_this_day[~df_this_day['lat'].isna() & ~df_this_day['lon'].isna() & ~df_this_day['alt'].isna()]
+        if len(df_this_day) == 0:
+            continue
         first_time_this_day = df_this_day['dt'].values.min().astype('datetime64[s]')
         last_time_this_day = df_this_day['dt'].values.max().astype('datetime64[s]')
         # Find LMA files that cover this time range
