@@ -277,7 +277,7 @@ def filter_triggers(filenames_parsed):
 
 def filter_empty(filenames_parsed):
     filenames_parsed['filtered_by_empty'] = False
-    for i, row in filenames_parsed.iterrows():
+    for i, this_path in filenames_parsed['raw_path'].items():
         if path.getsize(row['raw_path']) == 0:
             filenames_parsed.at[i, 'filtered_by_empty'] = True
     return filenames_parsed
@@ -317,7 +317,7 @@ if __name__ == '__main__':
     filenames_parsed = parse_all_filenames(raw_paths)
     if args.after is not None:
         after_dt = dt.strptime(args.after, '%Y%m%d')
-        filenames_parsed = filenames_parsed.loc[filenames_parsed['dt'] > after_dt]
+        filenames_parsed = filenames_parsed.loc[filenames_parsed['dt'] > after_dt].reset_index(drop=True)
     filenames_parsed = associate_sensor_nums(filenames_parsed)
     if args.cpu_serial_log is not None:
         create_cpu_serial_log(filenames_parsed)
