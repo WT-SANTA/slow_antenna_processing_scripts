@@ -267,16 +267,20 @@ def filter_lma(filenames_parsed, lma_data_path):
                 flash_df = pd.concat([flash_df, this_flash_df], ignore_index=True).reset_index(drop=True)
                 ds.close()
             if flash_df.shape[0] > 0:
-                flash_df = flash_df[flash_df['n_points'] >= 20] # only consider flashes with 20 or more points
+                flash_df = flash_df[flash_df['n_points'] >= 20].sort_values('flash_dt') # only consider flashes with 20 or more points
                 sensor_X, sensor_Y, sensor_Z = geosys.toECEF(df_this_day['lon'].values, df_this_day['lat'].values, np.zeros(df_this_day['lon'].shape))
                 flash_X, flash_Y, flash_Z = geosys.toECEF(flash_df['ctr_lon'].values, flash_df['ctr_lat'].values, np.zeros(flash_df['ctr_lon'].shape))
-                distances = ((sensor_X.reshape((-1, 1)) - flash_X.reshape((1, -1)))**2
-                        + (sensor_Y.reshape((-1, 1)) - flash_Y.reshape((1, -1)))**2
-                        + (sensor_Z.reshape((-1, 1)) - flash_Z.reshape((1, -1)))**2)**0.5
-                distances_thresholded = distances <= 100e3 # 100 km
-                times_differences = np.abs((df_this_day['dt'].values.reshape((-1, 1)) - flash_df['flash_dt'].values.reshape((1, -1))).astype('timedelta64[s]').astype(float))
-                times_differences_thresholded = times_differences <= 1800 # 30 minutes
-                flashes_nearby = np.any(distances_thresholded & times_differences_thresholded, axis=1)
+                # flashes are sorted by time, so the ones within 30 minutes of each file are a contiguous slice
+                window = np.timedelta64(1800, 's')
+                first_flash = np.searchsorted(flash_df['flash_dt'].values, df_this_day['dt'].values - window, side='left')
+                last_flash = np.searchsorted(flash_df['flash_dt'].values, df_this_day['dt'].values + window, side='right')
+                flashes_nearby = np.zeros(len(df_this_day), dtype=bool)
+                for i in range(len(df_this_day)):
+                    lower_bound, upper_bound = first_flash[i], last_flash[i]
+                    if lower_bound == upper_bound:
+                        continue
+                    distances = ((sensor_X[i] - flash_X[lower_bound:upper_bound])**2 + (sensor_Y[i] - flash_Y[lower_bound:upper_bound])**2 + (sensor_Z[i] - flash_Z[lower_bound:upper_bound])**2)**0.5
+                    flashes_nearby[i] = np.any(distances <= 100e3) # 100 km
                 paths_to_rm = df_this_day.loc[~flashes_nearby, 'raw_path']
                 filenames_parsed.loc[filenames_parsed['raw_path'].isin(paths_to_rm), 'filtered_by_lma'] = True
             else:
