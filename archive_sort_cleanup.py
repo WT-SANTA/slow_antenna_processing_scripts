@@ -295,6 +295,8 @@ if __name__ == '__main__':
     parser.add_argument('--debug-dataframe', '-d', type=str, default=None, help='Path to write the dataframe containing all parsed filename information and pruning decisions to a CSV for debugging purposes. Leave unspecified to skip.')
     parser.add_argument('--skip-crc-check', action='store_true', default=False, help='When a file already exists in the archive, skip the CRC32 check and continue without overwriting the file.')
     parser.add_argument('--after', '-a', type=str, default=None, help='Only process files with a collection date after this date. Format: %%Y%%m%%d')
+    parser.add_argument('--verbose', '-v', action='store_true', default=False, help='Increase verbosity.')
+
     args = parser.parse_args()
     if not args.dry_run:
         print('----> FILESYSTEM CHANGES CAN BE PERFORMED <----')
@@ -304,39 +306,63 @@ if __name__ == '__main__':
         print('----> Press CTRL + C in the next 5 seconds to abort! <----')
         sleep(5)
     # Read history, if provided
+    if args.verbose:
+        print('Reading history file...')
     if args.history_file is not None:
         history_df = pd.read_csv(args.history_file, parse_dates=['start_date', 'end_date'])
     else:
         history_df = pd.DataFrame(columns=['sensor_num', 'start_date', 'end_date', 'lat', 'lon', 'alt', 'cpu_id', 'relay', 'needs_utc_correction'])
     # Get full paths to all raw files
+    if args.verbose:
+        print('Globbing raw files...')
     raw_files = glob(path.join(args.unsorted_files, '**', '*.raw'), recursive=True)
+    if args.verbose:
+        print('Globbing compressed raw files...')
     raw_files += glob(path.join(args.unsorted_files, '**', '*.raw.gz'), recursive=True)
     raw_files = sorted(raw_files)
     raw_paths = [Path(f) for f in raw_files]
     # Do all the processing things
+    if args.verbose:
+        print('Parsing filenames...')
     filenames_parsed = parse_all_filenames(raw_paths)
     if args.after is not None:
         after_dt = dt.strptime(args.after, '%Y%m%d')
         filenames_parsed = filenames_parsed.loc[filenames_parsed['dt'] > after_dt].reset_index(drop=True)
+    if args.verbose:
+        print('Associating sensor numbers...')
     filenames_parsed = associate_sensor_nums(filenames_parsed)
     if args.cpu_serial_log is not None:
+        if args.verbose:
+            print('Creating CPU serial log...')
         create_cpu_serial_log(filenames_parsed)
+    if args.verbose:
+        print('Upgrading old filenames..')
     filenames_parsed = upgrade_old_filenames(filenames_parsed, history_df)
+    if args.verbose:
+        print('Fix for GH issue #3...')
     filenames_parsed = fix_issue_three(filenames_parsed)
     # Pruning
     filenames_parsed['keep'] = True
+    if args.verbose:
+        print('Pruning empty files...')
     filenames_parsed = filter_empty(filenames_parsed)
     filenames_parsed['keep'] = filenames_parsed['keep'] & ~filenames_parsed['filtered_by_empty']
     if args.lma_data is not None:
         if isinstance(args.lma_data, str):
             args.lma_data = [args.lma_data]
         for lma_path in args.lma_data:
+            if args.verbose:
+                print(f'Pruning via LMA: {lma_path}...')
             filenames_parsed = filter_lma(filenames_parsed, lma_path)
             filenames_parsed['keep'] = filenames_parsed['keep'] & ~filenames_parsed['filtered_by_lma']
     if args.trigger:
+        if args.verbose:
+            print('Pruning via triggers...')
         filenames_parsed = filter_triggers(filenames_parsed)
         filenames_parsed['keep'] = filenames_parsed['keep'] & ~filenames_parsed['filtered_by_trigger']
     filenames_parsed = filenames_parsed.sort_values('dt').reset_index(drop=True)
+    if args.verbose:
+        print('Sorting!')
     sort_files(filenames_parsed, args.archive_root, skip_crc=args.skip_crc_check)
     if args.debug_dataframe is not None:
         if args.debug_dataframe.endswith('.csv'):
