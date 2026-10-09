@@ -6,38 +6,44 @@ import argparse
 from os import path
 from pathlib import Path
 from glob import glob
-from sa_common import parse_filename
+from sa_common import parse_filename, open_gzip_or_dat
 from datetime import datetime as dt, timedelta, UTC
 from zoneinfo import ZoneInfo
+from zlib import crc32
 import numpy as np
 import pandas as pd
 import h5py
 from pyxlma import coords
 
 
-def copy_file(old_path, new_path, reason=None, dry_run=True, skip_crc=False):
-    if old_path == new_path:
+def copy_file(old_path, new_path, reason=None, dry_run=True, skip_crc=False, verbose=False):
+    def gz_compat_crc(file_path):
+        with open_gzip_or_dat(str(file_path)) as f:
+            return crc32(f.read())
+    if str(old_path) == str(new_path):
         return
     if reason is not None:
         reason_str = f' ({reason})'
     else:
         reason_str = ''
+    new_file_noext = new_path.removesuffix('.gz').removesuffix('.raw')
+    possible_new_paths = [new_file_noext + ext for ext in ['.raw', '.raw.gz']]
+    if any(path.exists(p) for p in possible_new_paths):
+        existing_path = [p for p in possible_new_paths if path.exists(p)][0]
+        if path.samefile(old_path, existing_path):
+            if verbose:
+                print(f'Skipping {old_path}, already archived as {existing_path}{reason_str}')
+            return
+        if not skip_crc and gz_compat_crc(old_path) != gz_compat_crc(existing_path):
+            unhandleable_file(f'File {existing_path} already exists and has different contents than {old_path}. Cannot copy {old_path} to {new_path} without overwriting a different file. Please resolve this conflict manually.', dry_run=dry_run)
+        elif verbose:
+            print(f'Skipping {old_path}, already archived as {existing_path}{reason_str}')
+        return
     if dry_run:
         print(f'Would copy {old_path} to {new_path}{reason_str}')
     else:
         print(f'Copying {old_path} to {new_path}{reason_str}')
         Path(path.dirname(new_path)).mkdir(parents=True, exist_ok=True)
-        if path.exists(new_path):
-            if skip_crc:
-                return
-            with open(old_path, 'rb') as f:
-                old_crc = crc32(f.read())
-            with open(new_path, 'rb') as f:
-                new_crc = crc32(f.read())
-            if old_crc == new_crc:
-                return
-            else:
-                unhandleable_file(f'File {new_path} already exists and has different contents than {old_path}. Cannot copy {old_path} to {new_path} without overwriting a different file. Please resolve this conflict manually.', dry_run=dry_run)
         copyfile(old_path, new_path)
 
 def unhandleable_file(message, dry_run=True):
@@ -73,6 +79,7 @@ def parse_all_filenames(raw_paths):
                     'alt': this_alt,
                     'gps_err': this_gps_err,
                     'cpu_id': this_cpu,
+                    'gzipped': f.endswith('.gz'),
                     'raw_path': raw_paths[i]
                 }
                 filenames_parsed.append(parsed)
@@ -169,7 +176,7 @@ def create_cpu_serial_log(filenames_parsed):
     cpu_serial_df.to_csv(args.cpu_serial_log, index=True)
 
 
-def sort_files(filenames_parsed, archive_root, skip_crc=False):
+def sort_files(filenames_parsed, archive_root, skip_crc=False, verbose=False):
     files_to_move = filenames_parsed.loc[filenames_parsed['keep']].reset_index(drop=True)
     for i, parsed in files_to_move.iterrows():
         if np.isnan(parsed['cpu_id']):
@@ -188,11 +195,11 @@ def sort_files(filenames_parsed, archive_root, skip_crc=False):
             new_path += '.raw.gz'
         else:
             new_path += '.raw'
-        copy_file(old_raw_path, new_path, dry_run=args.dry_run, skip_crc=skip_crc)
+        copy_file(old_raw_path, new_path, dry_run=args.dry_run, skip_crc=skip_crc, verbose=verbose)
         print(f'Processed file {i+1} of {files_to_move.shape[0]}')
 
 
-def move_log_files(unsorted_files_dir, archive_root, skip_crc=False):
+def move_log_files(unsorted_files_dir, archive_root, skip_crc=False, verbose=False):
     log_files = glob(path.join(unsorted_files_dir, '**', 'SA_log.out'), recursive=True)
     log_files += glob(path.join(unsorted_files_dir, '**', 'cronjobs_help.sh'), recursive=True)
     log_files += glob(path.join(unsorted_files_dir, '**', 'cronlog.txt'), recursive=True)
@@ -202,7 +209,7 @@ def move_log_files(unsorted_files_dir, archive_root, skip_crc=False):
     for log_file in log_files:
         new_path = log_file.replace(unsorted_files_dir, archive_root)
         if path.exists(path.dirname(new_path)):
-            copy_file(log_file, new_path, reason='log file', dry_run=args.dry_run, skip_crc=skip_crc)
+            copy_file(log_file, new_path, reason='log file', dry_run=args.dry_run, skip_crc=skip_crc, verbose=verbose)
         else:
             unhandleable_file(f'Could not find destination directory for log file {log_file}. Expected to find {path.dirname(new_path)}. Please resolve this issue manually.', dry_run=args.dry_run)
 
@@ -278,7 +285,7 @@ def filter_triggers(filenames_parsed):
 def filter_empty(filenames_parsed):
     filenames_parsed['filtered_by_empty'] = False
     for i, this_path in filenames_parsed['raw_path'].items():
-        if path.getsize(row['raw_path']) == 0:
+        if path.getsize(this_path) == 0:
             filenames_parsed.at[i, 'filtered_by_empty'] = True
     return filenames_parsed
 
@@ -302,7 +309,6 @@ if __name__ == '__main__':
         print('----> FILESYSTEM CHANGES CAN BE PERFORMED <----')
         from shutil import copyfile
         from time import sleep
-        from zlib import crc32
         print('----> Press CTRL + C in the next 5 seconds to abort! <----')
         sleep(5)
     # Read history, if provided
@@ -363,10 +369,10 @@ if __name__ == '__main__':
     filenames_parsed = filenames_parsed.sort_values('dt').reset_index(drop=True)
     if args.verbose:
         print('Sorting!')
-    sort_files(filenames_parsed, args.archive_root, skip_crc=args.skip_crc_check)
+    sort_files(filenames_parsed, args.archive_root, skip_crc=args.skip_crc_check, verbose=args.verbose)
     if args.debug_dataframe is not None:
         if args.debug_dataframe.endswith('.csv'):
             filenames_parsed.to_csv(args.debug_dataframe, index=False)
         elif args.debug_dataframe.endswith('.parquet'):
             filenames_parsed.to_parquet(args.debug_dataframe, index=False)
-    move_log_files(args.unsorted_files, args.archive_root, skip_crc=args.skip_crc_check)
+    move_log_files(args.unsorted_files, args.archive_root, skip_crc=args.skip_crc_check, verbose=args.verbose)
