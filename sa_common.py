@@ -102,7 +102,7 @@ def parse_filename(filename):
             out_dict['dt'] = dt.strptime(rawfile_split[0]+rawfile_split[1]+rawfile_split[2], '%Y%m%d%H%M%S%f')
             out_dict['lat'] = np.nan if rawfile_split[3] == 'NO' else float(rawfile_split[3])
             out_dict['lon'] = np.nan if rawfile_split[4] == 'FIX' else float(rawfile_split[4])
-            out_dict['alt'] = np.nan if rawfile_split[5] == '2Donly' else float(rawfile_split[5])
+            out_dict['alt'] = np.nan if rawfile_split[5].lower() == '2donly' else float(rawfile_split[5])
             gps_err = float(rawfile_split[6]) if ~np.isnan(out_dict['lon']) else 0
             if rawfile_split[6] == '-1.00':
                 out_dict['embedded_gps_pps'] = True
