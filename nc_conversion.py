@@ -2,7 +2,6 @@ from glob import glob
 import numpy as np
 import xarray as xr
 from pathlib import Path
-from scipy.signal import medfilt
 import pandas as pd
 import os
 import sa_common
@@ -10,9 +9,6 @@ import argparse
 from dask.distributed import LocalCluster, wait
 import sys
 import traceback
-
-
-u4max = np.iinfo(np.uint32).max
 
 
 def compress_all(nc_grids, min_dims=1):
@@ -23,104 +19,6 @@ def compress_all(nc_grids, min_dims=1):
             nc_grids[var].encoding["contiguous"] = False
     return nc_grids
 
-
-def correct_micros(micros, fs, tol=0.1, window=7):
-    """
-    micros is the timing data (integer microseconds) to be corrected.
-    fs is the nominal sample rate in samples/second
-    tol is the fraction of the sample interval used in defining large errors
-    window is the number of samples used to correct single-point noise.
-    
-    Output is corrected so that the time change between samples is
-    not greater than tol/fs.
-    
-    Two things can result in time that does not increase steadily.
-    1. Random read errors, which may be positive or negative. 
-        These are embedded in a steadily increasing ramp, so the 
-        median of these samples (for a large enough window)
-        Within window we expect these erros to be significantly differnt from the median
-    2. Integer rollover, which results in an instananeous change of -u4_int_max
-
-    First, run a median filter to eliminate most spikes. If the number of errors in the
-    window is larger than (window-1)/2, then the window will have an incorrect value.
-    But this value will be much smaller than the integer max, allowing us to isolate the
-    truly large negative changes from integer rollovers.
-    
-    >>> test_ramp = np.arange(-25, 25).astype('u4') + u8max
-    >>> medfilt(test_ramp, 3)
-    Near the jump this code gives 
-    [4294967292, 4294967293, 4294967294, 4294967294, 1, 1, 2, 3]
-    i.e., the delta remains large.
-
-    At the edges of the dataset, we have to be more careful. 
-    After correcting the middle of the dataset, check for bad data one more time.
-    If found, simply extrapolate using the floor of the mean sample rate.
-    
-    """
-    nominal_dt_micro = int(1e6/fs)
-    
-    def get_bad(m):
-        change = np.diff(m)
-        return (change < 0) & (change > int(tol*nominal_dt_micro))
-
-    # Median filter, and promote to 64 bit int
-    med_micro = medfilt(micros, window).astype('i8')
-    
-    ### Detect the large negatives, and add those to the original data
-    
-    # After median filtering, the jump could be corrupted by noise.
-    # Allow some tolerance
-    big_neg_thresh = -int((1-tol)*u4max)
-    sample_delta = np.diff(med_micro)
-    # print(big_neg_thresh, "negative rollover threshold; ", sample_delta.min(), "lowest delta")
-    large_neg = np.hstack([[False], 
-                           (sample_delta < big_neg_thresh)])
-    n_rollovers = large_neg.sum()
-    # print(n_rollovers, "total rollovers")
-    
-    # Set the points with large negative deltas to uint4max,
-    # then cumsum will accumulate correction amount to all points
-    # after each detected jump.
-    correction_mark = np.zeros_like(micros)
-    correction_mark[large_neg] = u4max
-    neg_correct = np.cumsum(correction_mark)
-    
-    micros = med_micro + neg_correct
-    
-    ### Check for remaining problems
-
-    bad = get_bad(micros)
-
-    if bad.sum() > 0:
-        # medfilt one more time
-        micros = medfilt(micros, window)
-    else:
-        return micros, n_rollovers
-
-    bad = get_bad(micros)
-    
-    # Check for problems at the beginning and end
-    front = slice(0, window)
-    if bad[front].sum() > 0:
-        micros[front] = micros[window] + nominal_dt_micro*np.arange(-window, 0, 1)
-
-    back = slice(-window, None)
-    if bad[back].sum() > 0:
-        micros[back] = micros[-window] + nominal_dt_micro*np.arange(0, window, 1)
-    
-    # Now look at any remaning deltas
-    bad = get_bad(micros)
-
-    if bad.sum() > 0:
-        # medfilt one more time with a very large window
-        micros = medfilt(micros, window*3)
-        bad = get_bad(micros)
-        if bad.sum() > 0:
-            raise ValueError("Could not correct all time errors; total bad = {0}".format(bad.sum()))
-        else:
-            return micros, n_rollovers
-    else:
-        return micros, n_rollovers
 
 
 def interpolate_across_system_times(ds, SAMPLE_RATE=9600):
@@ -158,47 +56,84 @@ def add_other_time_vars(ds):
     return ds
 
 
-def read_single_file(file_info, sample_rate, total_rollovers=0, previous_filepath=None):
+def read_single_file(file_info, previous_filepath=None):
     data_packets = sa_common.read_SA_file(file_info['path'], previous_file=previous_filepath)
-    pps_micros, adc_reading = sa_common.decode_SA_array(data_packets)
-    unrolled_micros, rollovers = correct_micros(pps_micros, sample_rate)
-    unrolled_micros = unrolled_micros + total_rollovers*u4max
-    time_orig = np.array([file_info['dt']]).astype('datetime64[us]') + (unrolled_micros - unrolled_micros[0]).astype('timedelta64[us]')
-    return unrolled_micros, adc_reading, time_orig, rollovers
+    micros, adc_reading = sa_common.decode_SA_array(data_packets)
+    return micros, adc_reading
 
 
-def process_file_pair(file_info_1, file_info_2, output_dir, previous_filepath=None, SAMPLE_RATE=9600):
-    # Read and decode raw data
-    unrolled_micros_1, adc_reading_1, time_orig_1, rollovers_1 = read_single_file(file_info_1,
-                                                                                  sample_rate=SAMPLE_RATE,
-                                                                                  total_rollovers=0,
-                                                                                  previous_filepath=previous_filepath)
-    unrolled_micros_2, adc_reading_2, time_orig_2, _ = read_single_file(file_info_2,
-                                                                                  sample_rate=SAMPLE_RATE,
-                                                                                  total_rollovers=rollovers_1,
-                                                                                  previous_filepath=file_info_1['path'])
-    unrolled_micros = np.concatenate((unrolled_micros_1, unrolled_micros_2))
-    adc_reading = np.concatenate((adc_reading_1, adc_reading_2))
-    time_orig = np.concatenate((time_orig_1, time_orig_2))
-
-    ds = xr.Dataset(pd.DataFrame(
-            {'ADC':adc_reading,
-             'pps_micro':unrolled_micros,
-             'time_uncorrected':time_orig})).reset_index('dim_0').drop_vars('dim_0').rename_dims({'dim_0':'sample'})
-    ds = interpolate_across_system_times(add_other_time_vars(ds))
-    ds = ds.drop_vars(['dt_system', 'dt_adc', 'pps_micro', 'time_uncorrected'])
-    ds = ds.sortby('time')
+def process_file_pair(file_info_1, file_info_2, output_dir, previous_filepath=None):
+    # Check to see if this file has already been processed
     sensor_num = file_info_1['sensor_num']
     sensor_lat = file_info_1['lat']
     sensor_lon = file_info_1['lon']
     sensor_alt = file_info_1['alt']
     sensor_relay = file_info_1['relay']
     this_dt = file_info_1['dt']
+    cpu_serial = hex(file_info_1['cpu_id'])
     fileoutname = f'SA{sensor_num}_{this_dt.strftime("%Y-%m-%d_%H-%M-%S")}.nc'
     fileoutpath = os.path.join(output_dir, fileoutname)
     if os.path.exists(fileoutpath):
         return
-    ds = ds.assign_coords({'sensor_num' : np.array([sensor_num], dtype='i4')})        
+    # Read and decode raw data
+    micros_1, adc_reading_1 = read_single_file(file_info_1, previous_filepath=previous_filepath)
+    micros_2, adc_reading_2 = read_single_file(file_info_2, previous_filepath=file_info_1['path'])
+    time_source = None
+    if file_info_1['embedded_gps_pps'] and file_info_2['embedded_gps_pps']:
+        # we have embedded PPS, exact timing info for file 1 can be dermined by interpolating between PPS rising edges in the file,
+        # plus the last PPS from the previous file and the first PPS from the file
+        micros_0, adc_reading_0 = read_single_file({'path' : previous_filepath}, previous_filepath=None) if previous_filepath is not None else (None, None)
+        if micros_0 is not None:
+            # if there's a previous file, concat all 3 files together
+            unrolled_micros = sa_common.correct_micros(np.concatenate((micros_0, micros_1, micros_2)))
+            adc_readings = np.concatenate((adc_reading_0, adc_reading_1, adc_reading_2))
+        else:
+            # otherwise just don't use the previous file, extrapolation does pretty well anyway.
+            unrolled_micros = sa_common.correct_micros(np.concatenate((micros_1, micros_2)))
+            adc_readings = np.concatenate((adc_reading_1, adc_reading_2))
+        try:
+            decode_out = sa_common.decode_lsb_metadata(unrolled_micros, adc_readings)
+            sample_times, sensor_lat, sensor_lon, sensor_alt, embedded_relay, embedded_cpu = decode_out
+            time_source = 'Embedded PPS and GPS in raw data least significant bit'
+        except ValueError as e:
+            if 'Cannot decode LSB metadata' not in str(e):
+                raise e
+    if time_source == 'Embedded PPS and GPS in raw data least significant bit':
+        match embedded_relay:
+            case 0:
+                sensor_relay = 'a'
+            case 1:
+                sensor_relay = 'b'
+            case 2:
+                sensor_relay = 'c'
+        cpu_serial = hex(embedded_cpu)
+        if adc_reading_0 is not None:
+            adc_readings = adc_readings[adc_reading_0.size:]
+            sample_times = sample_times[adc_reading_0.size:]
+        ds = xr.Dataset({
+            'ADC': ('sample', adc_readings),
+            'time': ('sample', sample_times)
+        })
+        file_info_1['gps_err'] = 0.0
+        ds['time'].attrs['time_source'] = time_source
+    else:
+        # if there's no embedded GPS, then do the old fashioned time interpolation methods
+        unrolled_micros = sa_common.correct_micros(np.concatenate((micros_1, micros_2)))
+        file_1_length = micros_1.size
+        time_orig_1 = np.array([file_info_1['dt']]).astype('datetime64[us]') + (unrolled_micros[0:file_1_length] - unrolled_micros[0]).astype('timedelta64[us]')
+        time_orig_2 = np.array([file_info_2['dt']]).astype('datetime64[us]') + (unrolled_micros[file_1_length:] - unrolled_micros[file_1_length]).astype('timedelta64[us]')
+        adc_reading = np.concatenate((adc_reading_1, adc_reading_2))
+        time_orig = np.concatenate((time_orig_1, time_orig_2))
+        ds = xr.Dataset(pd.DataFrame(
+                {'ADC':adc_reading,
+                'pps_micro':unrolled_micros,
+                'time_uncorrected':time_orig})).reset_index('dim_0').drop_vars('dim_0').rename_dims({'dim_0':'sample'})
+        ds = interpolate_across_system_times(add_other_time_vars(ds))
+        ds = ds.drop_vars(['dt_system', 'dt_adc', 'pps_micro', 'time_uncorrected'])
+        ds = ds.sortby('time')
+        ds['time'].attrs['time_source'] = 'Interpolated from file timestamps and system clock'
+        cpu_serial = hex(file_info_1['cpu_id'])
+    ds = ds.assign_coords({'sensor_num' : np.array([sensor_num], dtype='i4')})
     match sensor_relay:
         case 'a':
             sensor_relay = 0
@@ -207,9 +142,7 @@ def process_file_pair(file_info_1, file_info_2, output_dir, previous_filepath=No
         case 'c':
             sensor_relay = 2
         case _:
-            raise ValueError(f'Unknown relay: {sensor_relay}')
-    
-    cpu_serial = hex(file_info_1['cpu_id'])
+            raise ValueError(f'Unknown relay: {sensor_relay}')    
     ds = ds.assign(
         lat = ('sensor_num', np.array([sensor_lat], dtype='float32')),
         lon = ('sensor_num', np.array([sensor_lon], dtype='float32')),
@@ -290,7 +223,12 @@ if __name__ == '__main__':
     file_metadata_list = []
     file_sizes = []
     for f in files_input:
-        file_size = os.path.getsize(f)
+        if f.endswith('.gz'):
+            with open(f, 'rb') as fh:
+                fh.seek(-4, os.SEEK_END) # the last 4 bytes of a gzip contain the uncompressed size
+                file_size = int.from_bytes(fh.read(4), 'little')
+        else:
+            file_size = os.path.getsize(f)
         if file_size == 0:
             print(f"Warning: File {f} is empty and will be skipped.")
             continue
@@ -358,8 +296,7 @@ if __name__ == '__main__':
                                 client.submit(process_file_pair, this_deployment_metadata_df.iloc[0],
                                 this_deployment_metadata_df.iloc[1],
                                 output_dir,
-                                previous_filepath=None,
-                                SAMPLE_RATE=SAMPLE_RATE)))
+                                previous_filepath=None)))
             else:
                 print(f'Could not process file {this_deployment_metadata_df.iloc[0]["filename"]} because there is no previous file in the deployment to use for correction. Skipping this file.')
                 continue
@@ -378,8 +315,7 @@ if __name__ == '__main__':
                                 client.submit(process_file_pair, this_deployment_metadata_df.iloc[i-1],
                                             this_deployment_metadata_df.iloc[i],
                                             output_dir,
-                                            previous_filepath=this_deployment_metadata_df.iloc[i-2]['path'],
-                                SAMPLE_RATE=SAMPLE_RATE)))
+                                            previous_filepath=this_deployment_metadata_df.iloc[i-2]['path'])))
     wait([future for _, future in all_res])
     failures = []
     for source_path, future in all_res:
