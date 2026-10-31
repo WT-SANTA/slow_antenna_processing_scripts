@@ -170,6 +170,9 @@ def process_file_pair(file_info_1, file_info_2, output_dir, previous_filepath=No
         ds['ADC'].encoding['dtype'] = 'int32'
         ds['ADC'].encoding['_FillValue'] = -(2**31)
         ds['ADC'].attrs['units'] = 'volts'
+        ds.attrs['Plate Radius (m)'] = 0.127
+        ds.attrs['E-Field conversion instructions'] = 'To convert to E-Field in V/m, use the equation (A*V + B)/K, where A = static_cal_scale, V = ADC voltage, B = static_cal_offset, and K = (pi * plate_radius^2 * epsilon_0 * geo_cal_scale), where epsilon_0 = 8.854187817e-12 F/m.'
+        ds.attrs['E-Field conversion equation'] = r'\frac{A V + B}{\pi r^2 \epsilon_0 \gamma}'
     else:
         ds['ADC'].attrs['units'] = 'bits'
     ds['ADC'].attrs['long_name'] = adc_var_long_name
