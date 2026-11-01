@@ -152,7 +152,7 @@ def fix_issue_three(filenames_parsed):
         upper_bound = np.searchsorted(times, to_fix['dt'].values + window, side='right')
         for col in ['lat', 'lon', 'alt']:
             recorded_positions = group[col].values
-            nannan_positions = ~np.isnan(recorded_positions)
+            nannan_positions = ~np.isnan(recorded_positions) & (recorded_positions != 0)
             sums = np.concatenate([[0], np.cumsum(np.where(nannan_positions, recorded_positions, 0))])
             counts = np.concatenate([[0], np.cumsum(nannan_positions)])
             with np.errstate(invalid='ignore', divide='ignore'):
@@ -189,7 +189,7 @@ def sort_files(filenames_parsed, archive_root, skip_crc=False, verbose=False):
         old_raw_path = parsed['raw_path']
         this_lat = parsed["lat"] if ~np.isnan(parsed["lat"]) else 'NO'
         this_lon = parsed["lon"] if ~np.isnan(parsed["lon"]) else 'FIX'
-        this_alt = parsed["alt"] if ~np.isnan(parsed["alt"]) else '2DONLY'
+        this_alt = parsed["alt"] if ~np.isnan(parsed["alt"]) else '2Donly'
         this_gps_err = parsed["gps_err"] if ~np.isnan(parsed["gps_err"]) else 'NaT'
         this_cpu_id = hex(int(parsed["cpu_id"])).replace("0x", "") if ~np.isnan(parsed["cpu_id"]) else '0'
         this_relay = parsed["relay"] if parsed["relay"] in ['a', 'b', 'c'] else ''
