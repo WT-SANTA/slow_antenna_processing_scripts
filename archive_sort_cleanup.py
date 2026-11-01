@@ -215,8 +215,6 @@ def move_log_files(unsorted_files_dir, archive_root, skip_crc=False, verbose=Fal
         new_path = log_file.replace(unsorted_files_dir, archive_root)
         if path.exists(path.dirname(new_path)):
             copy_file(log_file, new_path, reason='log file', dry_run=args.dry_run, skip_crc=skip_crc, verbose=verbose)
-        else:
-            unhandleable_file(f'Could not find destination directory for log file {log_file}. Expected to find {path.dirname(new_path)}. Please resolve this issue manually.', dry_run=args.dry_run)
 
 
 def filter_lma(filenames_parsed, lma_data_path):
