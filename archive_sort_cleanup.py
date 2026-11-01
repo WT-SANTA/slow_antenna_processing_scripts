@@ -191,6 +191,8 @@ def sort_files(filenames_parsed, archive_root, skip_crc=False, verbose=False):
         this_lon = parsed["lon"] if ~np.isnan(parsed["lon"]) else 'FIX'
         this_alt = parsed["alt"] if ~np.isnan(parsed["alt"]) else '2Donly'
         this_gps_err = parsed["gps_err"] if ~np.isnan(parsed["gps_err"]) else 'NaT'
+        if parsed['embedded_gps_pps'] == True:
+            this_gps_err = '-1.00' # parse_filename flags embedded GPS PPS files by this exact string
         this_cpu_id = hex(int(parsed["cpu_id"])).replace("0x", "") if ~np.isnan(parsed["cpu_id"]) else '0'
         this_relay = parsed["relay"] if parsed["relay"] in ['a', 'b', 'c'] else ''
 
