@@ -226,7 +226,7 @@ if __name__ == '__main__':
     file_metadata_list = []
     file_sizes = []
     for f in files_input:
-        if f.endswith('.gz'):
+        if f.endswith('.gz') and os.path.getsize(f) >= 4:
             with open(f, 'rb') as fh:
                 fh.seek(-4, os.SEEK_END) # the last 4 bytes of a gzip contain the uncompressed size
                 file_size = int.from_bytes(fh.read(4), 'little')
