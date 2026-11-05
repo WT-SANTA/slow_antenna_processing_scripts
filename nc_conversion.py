@@ -6,7 +6,7 @@ import pandas as pd
 import os
 import sa_common
 import argparse
-from dask.distributed import LocalCluster, wait
+from dask.distributed import LocalCluster, wait, as_completed
 import sys
 import traceback
 
@@ -271,11 +271,9 @@ if __name__ == '__main__':
 
     # Group by sensor number
     all_sensors_metadata_df = [group.reset_index(drop=True) for _, group in file_metadata_df.groupby('cpu_id_hex')]
-    # setup dask for parallel processing
-    n_cpus_to_use = os.cpu_count()//2
-    cluster = LocalCluster(n_workers=n_cpus_to_use, threads_per_worker=1)
-    client = cluster.get_client()
-    all_res = []
+    if args.output_tree is not None:
+        input_root = os.path.commonpath(file_metadata_df['path'].tolist())
+    task_args = []
     for this_sensor_metadata_df in all_sensors_metadata_df:
         # Group by sensor deployment, continouous periods of time where each 'next file' is recorded immediately after the previous (with some tolerance)
         deployment_idx = this_sensor_metadata_df['expected_next_dt'].shift(1) < this_sensor_metadata_df['dt']
@@ -283,43 +281,45 @@ if __name__ == '__main__':
         all_deployments_metadata_df = [group.reset_index(drop=True) for _, group in this_sensor_metadata_df.groupby('deployment_idx')]
         # Process each deployment in parallel, with dask. Each deployment is a set of files that are continouous in time, so we can use the end of one file to correct the next.
         for this_deployment_metadata_df in all_deployments_metadata_df:
-            # Find output dir if unspecified, then submit the processing job to dask.
+            # convert dataframe to a list of dicts, which is smaller to transmit across memory pools 
+            this_deployment_files = this_deployment_metadata_df.to_dict('records')
             if args.output_tree is not None:
                 # Replace the root of the input path with the output tree root
-                input_root = os.path.commonpath(file_metadata_df['path'])
-                output_dir = os.path.join(args.output_tree, os.path.relpath(os.path.dirname(this_deployment_metadata_df.iloc[0]['path']), input_root))
+                output_dir = os.path.join(args.output_tree, os.path.relpath(os.path.dirname(this_deployment_files[0]['path']), input_root))
             else:
                 if args.output is None:
-                    output_dir = os.path.join(os.path.dirname(this_deployment_metadata_df.iloc[0]['path']), 'processed')
+                    output_dir = os.path.join(os.path.dirname(this_deployment_files[0]['path']), 'processed')
                 else:
                     output_dir = args.output
-            # For the first file in the deployment, there is no previous file to use for correction, so set previous_filepath to None. 
-            if len(this_deployment_metadata_df) > 1:
-                all_res.append((this_deployment_metadata_df.iloc[0]['path'],
-                                client.submit(process_file_pair, this_deployment_metadata_df.iloc[0],
-                                this_deployment_metadata_df.iloc[1],
-                                output_dir,
-                                previous_filepath=None)))
+            # For the first file in the deployment, there is no previous file to use for correction, so set previous_filepath to None.
+            if len(this_deployment_files) > 1:
+                task_args.append((this_deployment_files[0], this_deployment_files[1], output_dir, None))
             else:
-                print(f'Could not process file {this_deployment_metadata_df.iloc[0]["filename"]} because there is no previous file in the deployment to use for correction. Skipping this file.')
+                print(f'Could not process file {this_deployment_files[0]["filename"]} because there is no previous file in the deployment to use for correction. Skipping this file.')
                 continue
             # For subsequent files, use the previous file in the deployment.
-            for i in range(2, len(this_deployment_metadata_df)):
+            for i in range(2, len(this_deployment_files)):
                 if args.output_tree is not None:
                     # Replace the root of the input path with the output tree root
-                    input_root = os.path.commonpath(file_metadata_df['path'])
-                    output_dir = os.path.join(args.output_tree, os.path.relpath(os.path.dirname(this_deployment_metadata_df.iloc[i]['path']), input_root))
+                    output_dir = os.path.join(args.output_tree, os.path.relpath(os.path.dirname(this_deployment_files[i]['path']), input_root))
                 else:
                     if args.output is None:
-                        output_dir = os.path.join(os.path.dirname(this_deployment_metadata_df.iloc[i]['path']), 'processed')
+                        output_dir = os.path.join(os.path.dirname(this_deployment_files[i]['path']), 'processed')
                     else:
                         output_dir = args.output
-                all_res.append((this_deployment_metadata_df.iloc[i-1]['path'],
-                                client.submit(process_file_pair, this_deployment_metadata_df.iloc[i-1],
-                                            this_deployment_metadata_df.iloc[i],
-                                            output_dir,
-                                            previous_filepath=this_deployment_metadata_df.iloc[i-2]['path'])))
-    wait([future for _, future in all_res])
+                task_args.append((this_deployment_files[i-1], this_deployment_files[i], output_dir, this_deployment_files[i-2]['path']))
+    n_cpus_to_use = os.cpu_count()
+    cluster = LocalCluster(n_workers=n_cpus_to_use, threads_per_worker=1)
+    client = cluster.get_client()
+    # Submit every file pair in a single call. The scheduler runs in this process, so a long loop of client.submit
+    # calls competes with it for the GIL and the workers sit mostly idle until the loop finishes.
+    futures = client.map(process_file_pair, *zip(*task_args), pure=False) if task_args else []
+    all_res = [(file_info_1['path'], future) for (file_info_1, _, _, _), future in zip(task_args, futures)]
+    for n_done, _ in enumerate(as_completed(futures), 1):
+        pct = n_done / len(futures)
+        print(f'\r[{"#" * int(40 * pct):<40}] {n_done}/{len(futures)} file pairs ({pct:.0%})', end='', flush=True)
+    print()
+    wait(futures)
     failures = []
     for source_path, future in all_res:
         if future.status == 'error':
